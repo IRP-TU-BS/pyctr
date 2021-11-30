@@ -56,3 +56,52 @@ class LineRodPlot(Scene):
         self.wait(1)
         self.play(Transform(graph, graph2), Transform(graph_label, graph_label2))
         self.wait(1)
+
+
+
+class LineRodPlot3d(ThreeDScene):
+    def construct(self):
+        #self.camera.background_color = WHITE
+        ax = ThreeDAxes(
+            x_length = 7.0,
+            y_length = 7.0,
+            z_length = 5.0,
+                        axis_config={
+                'color' : WHITE,
+                'stroke_width' : 4,
+                'include_numbers' : False,
+                'decimal_number_config' : {
+                    'num_decimal_places' : 0,
+                    'include_sign' : True,
+                    'color' : WHITE
+                }})
+
+        self.set_camera_orientation(phi=2*PI/5, theta=-PI/4 , zoom=1.3)
+        self.add(ax)
+
+        z_label = ax.get_z_axis_label("z").set_color(WHITE)
+        y_label = ax.get_y_axis_label("y").set_color(WHITE)
+        x_label = ax.get_x_axis_label("x").set_color(WHITE)
+        grid_labels = VGroup(x_label, y_label, z_label)
+
+        self.add(grid_labels)
+
+        rod = CosseratRod()
+        # Arbitrary base frame assignment
+        p0 = np.array([[0, 0, 0]])
+        R0 = np.eye(3)
+        rod.set_initial_conditions(p0, R0)
+
+        for i, f in enumerate(np.linspace(0, 0.5, 10)):
+            wrench = np.array([0 , f/1000., f/1000., 0, 0, 0])
+            states = rod.push_end(wrench)
+            x_vals, y_vals, z_vals = states[:, 0], states[:, 1], states[:, 2]
+            if i > 0:
+                old_graph = copy(graph)
+            graph = ax.plot_line_graph(x_values=x_vals, y_values=y_vals, z_values=z_vals)
+            if i == 0:
+                self.play(Create(ax), Create(graph))  # , Write(graph_label))
+                self.wait()
+            else:
+                self.play(ReplacementTransform(old_graph, graph))
+                self.wait()

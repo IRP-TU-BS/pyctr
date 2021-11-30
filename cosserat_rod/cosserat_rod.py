@@ -59,7 +59,6 @@ class CosseratRod:
 
         v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])  # TODO research
         u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m)  # TODO research
-
         # ode
         ps = R.dot(v.T)
 
@@ -97,14 +96,14 @@ class CosseratRod:
         states = integrate.odeint(self.cosserate_rod_ode, y0, s)
         tip_wrench_shooting = states[-1][-6:]
 
-        distal_force_error = tip_wrench - tip_wrench_shooting
-
-        return np.hstack([distal_force_error])
+        distal_force_error = tip_wrench[:3] - tip_wrench_shooting[:3]
+        distal_moment_error = invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[3:])) - hat(tip_wrench[3:]).dot(hat(tip_wrench_shooting[3:]).T))
+        return np.hstack([distal_force_error, distal_moment_error])
 
     def push_end(self, wrench):
         self.set_bounding_values(['tip_wrench'], [wrench])
         state = np.zeros((1, 6))
-        solution_bvp = least_squares(self.shooting_function_force, state[0])
+        solution_bvp = least_squares(self.shooting_function_force, state[0], method='lm', loss = 'linear', ftol=1e-6)
         states = self.apply_force(solution_bvp.x)
         return states
 
@@ -115,7 +114,7 @@ class CosseratRod:
 
         start = timeit.default_timer()
 
-        solution_bvp = least_squares(self.shooting_function, state[0])
+        solution_bvp = least_squares(self.shooting_function, state[0], method='lm', loss = 'linear')
 
         stop = timeit.default_timer()
         #print('Time: ', stop - start)
@@ -135,8 +134,75 @@ class CosseratRod:
         #print('Time: ', stop - start)
         return states
 
+
+class CurvedCosseratRod(CosseratRod):
+    """
+    parent class for all rods
+    """
+
+    def __init__(self, params=None):
+        super().__init__(params)
+
+        if params is None:
+            self.params['kappa'] = np.array([0,0.16,0])
+
+        self._e3 = np.array([0,0,1])
+
+    def curvature_ode(self, state, s):
+        n = state[0:3]
+        m = state[3:6]
+        u = state[6:9]
+        R = np.reshape(state[9:18], (3, 3))
+        step_size = state[18:19]
+        u = -np.linalg.inv(self.params['Kbt']) @ (
+                    (hat(u) * self.params['Kbt']) @ (u - self.params['kappa']) + hat(self._e3) @ R.T @ (step_size * n) + R.T @ m)
+
+        state[6:9] = u
+        return state
+
+    def cosserate_rod_ode(self, state, s):
+        R = np.reshape(state[3:12], (3, 3))
+        # R_k = hat(np.array([0,0,self.params['k']]))
+        # R = R @ R_k
+        n = state[12:15]
+        m = state[15:18]
+        u = state[18:21]
+        step_size = state[21:]
+
+        v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])
+
+        u_div = -np.linalg.inv(self.params['Kbt']) @ (
+                (hat(u) * self.params['Kbt']) @ (u - self.params['kappa']) + hat(self._e3) @ R.T @ (
+                    step_size * n) + R.T @ m)
+
+        u_state = np.hstack([n,m,u, state[3:12],step_size])
+
+        s_u = np.linspace(0, step_size[0], 10)
+        u_state = integrate.odeint(self.curvature_ode, u_state, s_u)
+        u = u_state[-1][6:9]
+
+
+        ps = R.dot(v.T)
+        Rs = R.dot(hat(u))
+        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T
+        ms = -np.cross(ps.T[0], n)
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
+
+
+    def apply_force(self, wrench, step_size):
+        s_l = self.params['L']/step_size
+        p0, R0 = self.inital_conditions['p0'], self.inital_conditions['R0']
+        kappa_0 = self.inital_conditions['kappa_0']
+        s = np.linspace(0, s_l, step_size)
+        start = timeit.default_timer()
+        state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench, kappa_0[0], [step_size]])
+        states = integrate.odeint(self.cosserate_rod_ode, state, s)
+        stop = timeit.default_timer()
+        #print('Time: ', stop - start)
+        return states
+
 if __name__ == '__main__':
-    rod = CosseratRod()
+    rod = CurvedCosseratRod()
     # Arbitrary base frame assignment
     #L = rod.params['L']
     p0 = np.array([[0,0,0]])
@@ -147,17 +213,18 @@ if __name__ == '__main__':
     #RL = np.eye(3)
 
     rod.set_initial_conditions(p0, R0)
+    rod.inital_conditions['kappa_0'] = np.zeros((1,3))
 
-    states = rod.push_end(np.array([0,0.0,-0.1,0,0,0]))
-    #states = rod.apply_force(np.array([0,0.2,0,0,0,0]))
+    #states = rod.push_end(np.array([0,0.0,-0.1,0,0,0]))
+    states = rod.apply_force(np.array([0,0.2,0,0,0,0]), 10)
     plt.axis('scaled')
-    for f in np.linspace(0, -2, 20):
-        wrench = np.array([0, 0, f, 0, 0, 0])
-        states = rod.push_end(wrench)
-        x_vals, y_vals = states[:, 0], states[:, 2]
-        plt.plot(x_vals, y_vals)
-
+    #for f in np.linspace(0, -2, 20):
+    #    wrench = np.array([0, 0, f, 0, 0, 0])
+    #    states = rod.apply_force(wrench, 10)
+    #    x_vals, y_vals = states[:, 0], states[:, 2]
+    #    plt.plot(x_vals, y_vals)
+    print(states)
     #plt.plot(states[:,1],states[:,2])
     #plt.show()
     #plt.plot(states[:,0],states[:,1])
-    plt.show()
+    #plt.show()
