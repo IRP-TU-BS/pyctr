@@ -172,21 +172,15 @@ class CurvedCosseratRod(CosseratRod):
         v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])
 
         u_div = -np.linalg.inv(self.params['Kbt']) @ (
-                (hat(u) * self.params['Kbt']) @ (u - self.params['kappa']) + hat(self._e3) @ R.T @ (
-                    step_size * n) + R.T @ m)
+                (hat(u) @ self.params['Kbt']) @ (u - self.params['kappa']) + hat(self._e3) @ R.T @ (step_size * n) + R.T @ m)
 
-        u_state = np.hstack([n,m,u, state[3:12],step_size])
-
-        s_u = np.linspace(0, step_size[0], 10)
-        u_state = integrate.odeint(self.curvature_ode, u_state, s_u)
-        u = u_state[-1][6:9]
-
+        u += u_div
 
         ps = R.dot(v.T)
         Rs = R.dot(hat(u))
         ns = -self.params['rho'] * self.params['A'] * self.params['g'].T
         ms = -np.cross(ps.T[0], n)
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u, step_size])
 
 
     def apply_force(self, wrench, step_size):
@@ -195,7 +189,7 @@ class CurvedCosseratRod(CosseratRod):
         kappa_0 = self.inital_conditions['kappa_0']
         s = np.linspace(0, s_l, step_size)
         start = timeit.default_timer()
-        state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench, kappa_0[0], [step_size]])
+        state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench, kappa_0, [step_size]])
         states = integrate.odeint(self.cosserate_rod_ode, state, s)
         stop = timeit.default_timer()
         #print('Time: ', stop - start)
@@ -213,18 +207,17 @@ if __name__ == '__main__':
     #RL = np.eye(3)
 
     rod.set_initial_conditions(p0, R0)
-    rod.inital_conditions['kappa_0'] = np.zeros((1,3))
+    rod.inital_conditions['kappa_0'] = np.array([0,0.0, 0])
+    rod.params['kappa'] = np.array([0.66, 0, 0])
+    #rod.params['L'] = 10
 
     #states = rod.push_end(np.array([0,0.0,-0.1,0,0,0]))
-    states = rod.apply_force(np.array([0,0.2,0,0,0,0]), 10)
-    plt.axis('scaled')
+    states = rod.apply_force(np.array([0,0,0,0,0,0]), 100)
+    ax = plt.figure().add_subplot(projection='3d')
+    #ax.set(xlim=(-0.15, 0.15), ylim=(-0.15, 0.15), zlim=(-0.15, 0.15))
     #for f in np.linspace(0, -2, 20):
     #    wrench = np.array([0, 0, f, 0, 0, 0])
     #    states = rod.apply_force(wrench, 10)
-    #    x_vals, y_vals = states[:, 0], states[:, 2]
-    #    plt.plot(x_vals, y_vals)
-    print(states)
-    #plt.plot(states[:,1],states[:,2])
-    #plt.show()
-    #plt.plot(states[:,0],states[:,1])
-    #plt.show()
+    x_vals, y_vals, z_vals = states[:, 0], states[:, 1], states[:, 2]
+    ax.plot(x_vals, y_vals, z_vals, label='parametric curve')
+    plt.show()
