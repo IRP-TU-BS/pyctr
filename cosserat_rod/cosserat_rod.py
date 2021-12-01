@@ -56,7 +56,7 @@ class CosseratRod:
         #R = R @ R_k
         n = state[12:15]
         m = state[15:]
-
+        u = state[18:21]
         v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])  # TODO research
         u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m)  # TODO research
         # ode
@@ -65,16 +65,22 @@ class CosseratRod:
         Rs = R.dot(hat(u))
         ns = -self.params['rho'] * self.params['A'] * self.params['g'].T
         ms = -np.cross(ps.T[0], n)
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u])
 
     def shooting_function(self, guess):
         s = np.linspace(0, self.params['L'], 100)
 
         n0 = guess[:3]
         m0 = guess[3:6]
-        y0 = np.hstack([self.inital_conditions['p0'][0], np.reshape(self.inital_conditions['R0'],(1,9))[0], n0, m0])
+        if self.params['kappa_0'] is None:
+            u = np.zeros(3)
+        else:
+            u = self.params['kappa_0']
+
+        y0 = np.hstack([self.inital_conditions['p0'][0], np.reshape(self.inital_conditions['R0'],(1,9))[0], n0, m0, u])
         pL = self.bounding_values['pL']
         RL = self.bounding_values['RL']
+
 
         states = integrate.odeint(self.cosserate_rod_ode, y0, s)
         pL_shooting = states[-1][:3]
@@ -90,7 +96,11 @@ class CosseratRod:
 
         n0 = guess[:3]
         m0 = guess[3:6]
-        y0 = np.hstack([self.inital_conditions['p0'][0], np.reshape(self.inital_conditions['R0'],(1,9))[0], n0, m0])
+        if not ('kappa_0' in self.inital_conditions.keys()):
+            u = np.zeros(3)
+        else:
+            u = self.inital_conditions['kappa_0']
+        y0 = np.hstack([self.inital_conditions['p0'][0], np.reshape(self.inital_conditions['R0'],(1,9))[0], n0, m0, u])
         tip_wrench = self.bounding_values['tip_wrench']
 
         states = integrate.odeint(self.cosserate_rod_ode, y0, s)
@@ -146,7 +156,7 @@ class CurvedCosseratRod(CosseratRod):
         if params is None:
             self.params['kappa'] = np.array([0,0.16,0])
 
-        self._e3 = np.array([0,0,1])
+        self._e3 = np.array([[0,0,1]])
 
     def curvature_ode(self, state, s):
         n = state[0:3]
@@ -155,7 +165,7 @@ class CurvedCosseratRod(CosseratRod):
         R = np.reshape(state[9:18], (3, 3))
         step_size = state[18:19]
         u = -np.linalg.inv(self.params['Kbt']) @ (
-                    (hat(u) * self.params['Kbt']) @ (u - self.params['kappa']) + hat(self._e3) @ R.T @ (step_size * n) + R.T @ m)
+                (hat(u) @ self.params['Kbt']) @ (u - self.params['kappa']) + R.T @ m)
 
         state[6:9] = u
         return state
@@ -167,29 +177,29 @@ class CurvedCosseratRod(CosseratRod):
         n = state[12:15]
         m = state[15:18]
         u = state[18:21]
-        step_size = state[21:]
-
-        v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])
 
         u_div = -np.linalg.inv(self.params['Kbt']) @ (
-                (hat(u) @ self.params['Kbt']) @ (u - self.params['kappa']) + hat(self._e3) @ R.T @ (step_size * n) + R.T @ m)
+                (hat(u) @ self.params['Kbt']) @ (u - self.params['kappa']) + R.T @ m)
+        #u_s = np.linspace(0, step_size[0], 10)
+        #u_state = np.hstack([n,m,u,state[3:12],step_size])
+        #u_states = integrate.odeint(self.curvature_ode, u_state, u_s)
+        u = u + u_div #u_states[-1,6:9]
+        #print(u_states[:,6:9])
 
-        u += u_div
-
-        ps = R.dot(v.T)
+        ps = R.dot(self._e3.T)
         Rs = R.dot(hat(u))
         ns = -self.params['rho'] * self.params['A'] * self.params['g'].T
         ms = -np.cross(ps.T[0], n)
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u, step_size])
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u])
 
 
-    def apply_force(self, wrench, step_size):
-        s_l = self.params['L']/step_size
+    def apply_force(self, wrench, step_size= 100):
+        #s_l = self.params['L']/step_size
         p0, R0 = self.inital_conditions['p0'], self.inital_conditions['R0']
         kappa_0 = self.inital_conditions['kappa_0']
-        s = np.linspace(0, s_l, step_size)
+        s = np.linspace(0, self.params['L'], step_size)
         start = timeit.default_timer()
-        state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench, kappa_0, [step_size]])
+        state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench, kappa_0])
         states = integrate.odeint(self.cosserate_rod_ode, state, s)
         stop = timeit.default_timer()
         #print('Time: ', stop - start)
@@ -198,26 +208,30 @@ class CurvedCosseratRod(CosseratRod):
 if __name__ == '__main__':
     rod = CurvedCosseratRod()
     # Arbitrary base frame assignment
-    #L = rod.params['L']
     p0 = np.array([[0,0,0]])
     R0 = np.eye(3)
-    #n0 = np.array([[0, 0, 0]])
-    #m0 = np.array([[0, 0, 0]])
-    #pL = np.array([[0,0.3,0.9*L]])
-    #RL = np.eye(3)
 
     rod.set_initial_conditions(p0, R0)
-    rod.inital_conditions['kappa_0'] = np.array([0,0.0, 0])
-    rod.params['kappa'] = np.array([0.66, 0, 0])
-    #rod.params['L'] = 10
+    rod.params['L'] = 1.5
 
-    #states = rod.push_end(np.array([0,0.0,-0.1,0,0,0]))
-    states = rod.apply_force(np.array([0,0,0,0,0,0]), 100)
+    kappa = np.deg2rad(90) / rod.params['L']
+    print(kappa)
+    rod.inital_conditions['kappa_0'] = np.array([0,kappa, 0])
+
+    rod.params['kappa'] = np.array([0.,kappa, 0])
+
+    states = rod.push_end(np.array([0,0, 0,0,0,0]))
     ax = plt.figure().add_subplot(projection='3d')
-    #ax.set(xlim=(-0.15, 0.15), ylim=(-0.15, 0.15), zlim=(-0.15, 0.15))
-    #for f in np.linspace(0, -2, 20):
-    #    wrench = np.array([0, 0, f, 0, 0, 0])
-    #    states = rod.apply_force(wrench, 10)
     x_vals, y_vals, z_vals = states[:, 0], states[:, 1], states[:, 2]
     ax.plot(x_vals, y_vals, z_vals, label='parametric curve')
+
+    for f in np.linspace(0, 0.2, 2):
+        wrench = np.array([0, -f, 0, 0, 0, 0])
+        states = rod.push_end(wrench)
+        x_vals, y_vals, z_vals = states[:, 0], states[:, 1], states[:, 2]
+        ax.plot(x_vals, y_vals, z_vals, label='parametric curve')
+    ax.set_zlabel('Z')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set(xlim=[-0.2,0.2],ylim=[-0.2,0.2],zlim=[-0.2,0.2])
     plt.show()

@@ -63,20 +63,25 @@ class LineRodPlot3d(ThreeDScene):
     def construct(self):
         #self.camera.background_color = WHITE
         ax = ThreeDAxes(
-            x_length = 7.0,
-            y_length = 7.0,
-            z_length = 5.0,
+            x_length = 1.0,
+            y_length = 1.0,
+            z_length = 1.0,
                         axis_config={
-                'color' : WHITE,
-                'stroke_width' : 4,
-                'include_numbers' : False,
-                'decimal_number_config' : {
-                    'num_decimal_places' : 0,
-                    'include_sign' : True,
-                    'color' : WHITE
+                            'tick_size': 0.001,
+                            'tip_width': 0.01,
+                            'tip_height': 0.01,
+                            'include_tip': False,
+                            'color' : WHITE,
+                            'stroke_width' : 0.1,
+                            'include_numbers' : False,
+                            'decimal_number_config' : {
+                                'num_decimal_places' : 0,
+                                'include_sign' : True,
+                                'color' : WHITE,
+
                 }})
 
-        self.set_camera_orientation(phi=2*PI/5, theta=-PI/4 , zoom=1.3)
+        self.set_camera_orientation(phi=2*PI/5, theta=-PI/4 , zoom=15)
         self.add(ax)
 
         z_label = ax.get_z_axis_label("z").set_color(WHITE)
@@ -86,19 +91,25 @@ class LineRodPlot3d(ThreeDScene):
 
         self.add(grid_labels)
 
-        rod = CosseratRod()
+        rod = CurvedCosseratRod()
         # Arbitrary base frame assignment
         p0 = np.array([[0, 0, 0]])
         R0 = np.eye(3)
         rod.set_initial_conditions(p0, R0)
+        rod.params['L'] = 1.5
+        kappa = np.deg2rad(80) / rod.params['L']
+        print(kappa)
+        rod.inital_conditions['kappa_0'] = np.array([0, kappa, 0])
 
-        for i, f in enumerate(np.linspace(0, 0.5, 10)):
-            wrench = np.array([0 , f/1000., f/1000., 0, 0, 0])
+        rod.params['kappa'] = np.array([0., kappa, 0])
+
+        for i, f in enumerate(np.linspace(0, 0.2, 10)):
+            wrench = np.array([0 , -f, 0, 0, 0, 0])
             states = rod.push_end(wrench)
             x_vals, y_vals, z_vals = states[:, 0], states[:, 1], states[:, 2]
             if i > 0:
                 old_graph = copy(graph)
-            graph = ax.plot_line_graph(x_values=x_vals, y_values=y_vals, z_values=z_vals)
+            graph = ax.plot_line_graph(x_values=x_vals, y_values=y_vals, z_values=z_vals, vertex_dot_radius=0.00001)
             if i == 0:
                 self.play(Create(ax), Create(graph))  # , Write(graph_label))
                 self.wait()
