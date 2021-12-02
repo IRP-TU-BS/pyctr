@@ -205,6 +205,19 @@ class CurvedCosseratRod(CosseratRod):
         #print('Time: ', stop - start)
         return states
 
+
+def plot_frame(ax, R, p):
+    ex = R @ np.array([[0.1, 0, 0]]).T
+    ey = R @ np.array([[0, 0.1, 0]]).T
+    ez = R @ np.array([[0, 0, 0.1]]).T
+    x = np.hstack([p.T, p.T + ex])
+    y = np.hstack([p.T, p.T + ey])
+    z = np.hstack([p.T, p.T + ez])
+    ax.plot(x[0, :], x[1, :], x[2, :], color='b')
+    ax.plot(y[0, :], y[1, :], y[2, :], color='g')
+    ax.plot(z[0, :], z[1, :], z[2, :], color='r')
+    return ax
+
 if __name__ == '__main__':
     rod = CurvedCosseratRod()
     # Arbitrary base frame assignment
@@ -212,7 +225,7 @@ if __name__ == '__main__':
     R0 = np.eye(3)
 
     rod.set_initial_conditions(p0, R0)
-    rod.params['L'] = 1.5
+    rod.params['L'] = 1.
 
     kappa = np.deg2rad(90) / rod.params['L']
     print(kappa)
@@ -221,15 +234,35 @@ if __name__ == '__main__':
     rod.params['kappa'] = np.array([0.,kappa, 0])
 
     states = rod.push_end(np.array([0,0, 0,0,0,0]))
+    Rn0 = np.reshape(states[-1][3:12], (3, 3))
+    pn0 = np.asarray([states[-1][:3]])
+
     ax = plt.figure().add_subplot(projection='3d')
     x_vals, y_vals, z_vals = states[:, 0], states[:, 1], states[:, 2]
     ax.plot(x_vals, y_vals, z_vals, label='parametric curve')
+    plot_frame(ax, Rn0, pn0)
 
-    for f in np.linspace(0, 0.2, 2):
+    for p in np.linspace(0.2, 1, 5):
+        f = 0.2*p
+        r = np.pi/2 * p
+        R0 = np.array([[np.cos(r), -np.sin(r), 0],
+                       [np.sin(r), np.cos(r), 0],
+                       [0, 0, 1]])
+        rod.set_initial_conditions(p0, R0)
+        rod.inital_conditions['kappa_0'] = np.array([0, kappa, 0])
+        states = rod.push_end(np.array([0, 0, 0, 0, 0, 0]))
+        Rn0 = np.reshape(states[-1][3:12], (3, 3))
         wrench = np.array([0, -f, 0, 0, 0, 0])
+        wrench[:3] = Rn0 @ wrench[:3]
+        wrench[3:] = Rn0 @ wrench[3:]
         states = rod.push_end(wrench)
+        p = np.asarray([states[-1][:3]])
+        R = np.reshape(states[-1][3:12], (3, 3))
+        plot_frame(ax, R, p)
+
         x_vals, y_vals, z_vals = states[:, 0], states[:, 1], states[:, 2]
         ax.plot(x_vals, y_vals, z_vals, label='parametric curve')
+    plot_frame(ax, R0, p0)
     ax.set_zlabel('Z')
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
