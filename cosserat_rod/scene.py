@@ -116,3 +116,80 @@ class LineRodPlot3d(ThreeDScene):
             else:
                 self.play(ReplacementTransform(old_graph, graph))
                 self.wait()
+
+
+class MoveSingleRod(ThreeDScene):
+    def construct(self):
+        #self.camera.background_color = WHITE
+        ax = ThreeDAxes(
+            x_length = 1.0,
+            y_length = 1.0,
+            z_length = 1.0,
+                        axis_config={
+                            'tick_size': 0.001,
+                            'tip_width': 0.01,
+                            'tip_height': 0.01,
+                            'include_tip': False,
+                            'color' : WHITE,
+                            'stroke_width' : 0.1,
+                            'include_numbers' : False,
+                            'decimal_number_config' : {
+                                'num_decimal_places' : 0,
+                                'include_sign' : True,
+                                'color' : WHITE,
+
+                }})
+
+        self.set_camera_orientation(phi=2*PI/5, theta=-PI/4 , zoom=15)
+        self.add(ax)
+
+        z_label = ax.get_z_axis_label("z").set_color(WHITE)
+        y_label = ax.get_y_axis_label("y").set_color(WHITE)
+        x_label = ax.get_x_axis_label("x").set_color(WHITE)
+        grid_labels = VGroup(x_label, y_label, z_label)
+
+        self.add(grid_labels)
+
+        rod = CurvedCosseratRod()
+        # Arbitrary base frame assignment
+        p0 = np.array([[0, 0, 0]])
+        R0 = np.eye(3)
+
+        rod.set_initial_conditions(p0, R0)
+        rod.params['L'] = 1.
+
+        kappa = np.deg2rad(90) / rod.params['L']
+        rod.inital_conditions['kappa_0'] = np.array([0, 0, 0])
+
+        rod.params['kappa'] = kappa
+        rod.params['straight_length'] = 0.9
+
+        states = rod.push_end(np.array([0, 0, 0, 0, 0, 0]))
+        Rn0 = np.reshape(states[-1][3:12], (3, 3))
+        pn0 = np.asarray([states[-1][:3]])
+
+        for i, p in enumerate(np.linspace(0.1, 1, 20)):
+            f = 3 * p
+            r = np.pi * p
+            R0 = np.array([[np.cos(r), -np.sin(r), 0],
+                           [np.sin(r), np.cos(r), 0],
+                           [0, 0, 1]])
+            rod.set_initial_conditions(p0, R0)
+            rod.inital_conditions['kappa_0'] = np.array([0, 0, 0])
+            states = rod.push_end(np.array([0, 0, 0, 0, 0, 0]))
+            Rn0 = np.reshape(states[-1][3:12], (3, 3))
+            wrench = np.array([0, 0, -f, 0, 0, 0])
+            wrench[:3] = Rn0 @ wrench[:3]
+            wrench[3:] = Rn0 @ wrench[3:]
+            states = rod.push_end(wrench)
+
+            x_vals, y_vals, z_vals = states[:, 0], states[:, 1], states[:, 2]
+            if i > 0:
+                old_graph = copy(graph)
+            graph = ax.plot_line_graph(x_values=x_vals, y_values=y_vals, z_values=z_vals, vertex_dot_radius=0.00001)
+            if i == 0:
+                self.play(Create(ax), Create(graph))  # , Write(graph_label))
+                #self.wait()
+            else:
+                self.play(ReplacementTransform(old_graph, graph))
+                #self.wait()

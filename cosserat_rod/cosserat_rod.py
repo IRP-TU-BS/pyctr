@@ -96,15 +96,9 @@ class CosseratRod:
 
         n0 = guess[:3]
         m0 = guess[3:6]
-        if not ('kappa_0' in self.inital_conditions.keys()):
-            u = np.zeros(3)
-        else:
-            u = self.inital_conditions['kappa_0']
-        y0 = np.hstack([self.inital_conditions['p0'][0], np.reshape(self.inital_conditions['R0'],(1,9))[0], n0, m0, u])
         tip_wrench = self.bounding_values['tip_wrench']
-
-        states = integrate.odeint(self.cosserate_rod_ode, y0, s)
-        tip_wrench_shooting = states[-1][-6:]
+        states = self.apply_force(np.hstack([n0, m0]))
+        tip_wrench_shooting = states[-1][12:18]
 
         distal_force_error = tip_wrench[:3] - tip_wrench_shooting[:3]
         distal_moment_error = invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[3:])) - hat(tip_wrench[3:]).dot(hat(tip_wrench_shooting[3:]).T))
@@ -156,7 +150,8 @@ class CurvedCosseratRod(CosseratRod):
         if params is None:
             self.params['kappa'] = np.array([0,0.16,0])
 
-        self._e3 = np.array([[0,0,1]])
+        self._e3 = np.array([[0,0,1]]) # define z-axis as coinciding with curve
+        self._step_size = None
 
     def curvature_ode(self, state, s):
         n = state[0:3]
@@ -170,6 +165,11 @@ class CurvedCosseratRod(CosseratRod):
         state[6:9] = u
         return state
 
+
+    def get_u_div(self, R, n, m, u):
+        return -np.linalg.inv(self.params['Kbt']) @ (
+                (hat(u) @ self.params['Kbt']) @ (u - self.get_kappa())  - (np.dot(hat(self._e3[0])@R.T,self._step_size*np.asarray([n]).T).T[0]+ R.T @ m))
+
     def cosserate_rod_ode(self, state, s):
         R = np.reshape(state[3:12], (3, 3))
         # R_k = hat(np.array([0,0,self.params['k']]))
@@ -178,9 +178,7 @@ class CurvedCosseratRod(CosseratRod):
         m = state[15:18]
         u = state[18:21]
 
-        u_div = -np.linalg.inv(self.params['Kbt']) @ (
-                (hat(u) @ self.params['Kbt']) @ (u - self.kappa(s)) + R.T @ m)
-        #u_s = np.linspace(0, step_size[0], 10)
+        u_div = self.get_u_div(R, n, m, u)
         #u_state = np.hstack([n,m,u,state[3:12],step_size])
         #u_states = integrate.odeint(self.curvature_ode, u_state, u_s)
         u = u + u_div #u_states[-1,6:9]
@@ -193,26 +191,45 @@ class CurvedCosseratRod(CosseratRod):
         return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u])
 
 
-    def kappa(self, s):
-        #print(s)
-        #if s < self.params['straight_length']:
+    def get_kappa(self):
         return np.array([0, self.params['kappa'], 0])
-        #else:
-        #    return np.zeros(3)
+    def set_kappa(self, kappa):
+        self.params['kappa'] = kappa
 
 
-    def apply_force(self, wrench, step_size= 100):
-        #s_l = self.params['L']/step_size
+    def apply_force(self, wrench, steps= 100):
+
+        self._step_size = self.params['L']/steps
+        step_size_straight = int(steps*self.params['straight_length']/self.params['L'])
+        step_size_curved = int(steps * (self.params['L']-self.params['straight_length'])/ self.params['L'])
+        # straight part
         p0, R0 = self.inital_conditions['p0'], self.inital_conditions['R0']
-        kappa_0 = self.inital_conditions['kappa_0']
-        s = np.linspace(0, self.params['L'], step_size)
-        start = timeit.default_timer()
+        curved_kappa = self.params['kappa']
+        self.set_kappa(0)
+        kappa_0 = self.get_kappa()
+        s = np.linspace(0, self.params['straight_length'], step_size_straight)
         state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench, kappa_0])
-        states = integrate.odeint(self.cosserate_rod_ode, state, s)
-        stop = timeit.default_timer()
-        #print('Time: ', stop - start)
+        straight_states = integrate.odeint(self.cosserate_rod_ode, state, s)
+        p0 = straight_states[-1][:3]
+        R0 = straight_states[-1][3:12]
+        self.set_kappa(curved_kappa)
+        kappa_0 = self.get_kappa()
+        s = np.linspace(0, self.params['L']-self.params['straight_length'], step_size_curved)
+        state = np.hstack([p0, R0, wrench, kappa_0])
+        curved_states = integrate.odeint(self.cosserate_rod_ode, state, s)
+        states = np.vstack([straight_states, curved_states])
         return states
 
+    #def set_beta(self, beta):
+    #
+    #    [1, 1.5, 1.2, 2]
+
+class CombinedTubes:
+    def __init__(self, tubes):
+        self.tubes = tubes
+
+    def get_ordered_segments(self, betas):
+        ends = [rod.get]
 
 def plot_frame(ax, R, p):
     ex = R @ np.array([[0.1, 0, 0]]).T
@@ -226,6 +243,21 @@ def plot_frame(ax, R, p):
     ax.plot(z[0, :], z[1, :], z[2, :], color='r')
     return ax
 
+def plot_all_frame(ax, states):
+    for state in states:
+        R = np.reshape(state[3:12], (3, 3))
+        p = np.asarray([state[:3]])
+        ex = R @ np.array([[0.01, 0, 0]]).T
+        ey = R @ np.array([[0, 0.01, 0]]).T
+        ez = R @ np.array([[0, 0, 0.01]]).T
+        x = np.hstack([p.T, p.T + ex])
+        y = np.hstack([p.T, p.T + ey])
+        z = np.hstack([p.T, p.T + ez])
+        ax.plot(x[0, :], x[1, :], x[2, :], color='b')
+        ax.plot(y[0, :], y[1, :], y[2, :], color='g')
+        ax.plot(z[0, :], z[1, :], z[2, :], color='r')
+    return ax
+
 if __name__ == '__main__':
     rod = CurvedCosseratRod()
     # Arbitrary base frame assignment
@@ -237,10 +269,10 @@ if __name__ == '__main__':
 
     kappa = np.deg2rad(90) / rod.params['L']
     print(kappa)
-    rod.inital_conditions['kappa_0'] = np.array([0, kappa, 0])
+    rod.inital_conditions['kappa_0'] = np.array([0, 0, 0])
 
-    rod.params['kappa'] = 0 #kappa
-    rod.params['straight_length'] = 0.5
+    rod.params['kappa'] = kappa
+    rod.params['straight_length'] = 0.25
 
 
     states = rod.push_end(np.array([0,0, 0,0,0,0]))
@@ -252,17 +284,17 @@ if __name__ == '__main__':
     ax.plot(x_vals, y_vals, z_vals, label='parametric curve')
     plot_frame(ax, Rn0, pn0)
 
-    for p in np.linspace(0.2, 1, 1):
-        f = 0 #0.2*p
-        r = 0 #np.pi/2 * p
+    for p in np.linspace(0.1, 1, 5):
+        f = 1*p
+        r = 0#np.pi/2 * p
         R0 = np.array([[np.cos(r), -np.sin(r), 0],
                        [np.sin(r), np.cos(r), 0],
                        [0, 0, 1]])
         rod.set_initial_conditions(p0, R0)
-        rod.inital_conditions['kappa_0'] = np.array([0, kappa, 0])
+        rod.inital_conditions['kappa_0'] = np.array([0, 0, 0])
         states = rod.push_end(np.array([0, 0, 0, 0, 0, 0]))
         Rn0 = np.reshape(states[-1][3:12], (3, 3))
-        wrench = np.array([0, -f, 0, 0, 0, 0])
+        wrench = np.array([0, -f, -f, 0, 0, 0])
         wrench[:3] = Rn0 @ wrench[:3]
         wrench[3:] = Rn0 @ wrench[3:]
         states = rod.push_end(wrench)
@@ -272,6 +304,7 @@ if __name__ == '__main__':
 
         x_vals, y_vals, z_vals = states[:, 0], states[:, 1], states[:, 2]
         ax.plot(x_vals, y_vals, z_vals, label='parametric curve')
+    plot_all_frame(ax, states)
     plot_frame(ax, R0, p0)
     ax.set_zlabel('Z')
     ax.set_xlabel('X')
