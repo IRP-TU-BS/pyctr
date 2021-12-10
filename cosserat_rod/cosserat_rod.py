@@ -1,3 +1,4 @@
+import pdb
 import timeit
 import numpy as np
 import scipy as sc
@@ -249,9 +250,10 @@ class CombinedTubes:
     def calc_forward(self, R_init, p_init, wrench, step_len):
         R = R_init
         p = p_init[0]
+        self.step_len = step_len
         steps = int(self.tubes[0].params['L']/step_len)
         s = np.linspace(0, self.tubes[0].params['L'], steps)
-        state = np.hstack([p, R.reshape((1, 9))[0], wrench, np.zeros(3), step_len])
+        state = np.hstack([p, R.reshape((1, 9))[0], wrench, np.zeros(3)])
         return integrate.odeint(self.cosserate_rod_ode, state, s)
 
     def cosserate_rod_ode(self, state, s):
@@ -259,8 +261,6 @@ class CombinedTubes:
         n = state[12:15]
         m = state[15:18]
         u = state[18:21]
-        step_len = state[21:22][0]
-        u_d = state[22:25]
 
         avail_tubes = 0
 
@@ -272,32 +272,42 @@ class CombinedTubes:
             if -1 == int(curved_part):
                 continue
             avail_tubes += 1
-            K += rod.params['K']
+            K += rod.params['Kbt']
 
 
-        for t in range(0,len(self.tubes)):
+        for t in range(0,avail_tubes):
             rod = self.tubes[t]
             curved_part = rod.is_curved_or_there(s)
-            if -1 == int(curved_part):
-                continue
-            rod._step_size=step_len
+
+            R_theta = np.identity(3)
+
+            rod._step_size=self.step_len
             u_rod_skala = rod.params["kappa"]*curved_part
             rod.set_kappa(u_rod_skala)
             #u_rod = np.array([0, u_rod_skala, 0])
             rod.inital_conditions['kappa_0'] = np.array([0, u_rod_skala, 0])
 
-            (hat(u) @ self.params['Kbt']) @ (u - self.get_kappa())  - (np.dot(hat(self._e3[0]) @ R.T, self._step_size * np.asarray([n]).T).T[0] + R.T @ m)
+            u_i_star = invhat((R @ R_theta).T @ ((R@R_theta) @ hat(rod.get_kappa())))
+            u_i_star_div = invhat((R @ R_theta) @ hat(rod.get_kappa()))
 
+            u_div = rod.params['Kbt'] @ (-u_i_star_div) + (hat(u) @ rod.params['Kbt']) @ (u - u_i_star)  - (np.dot(hat(rod._e3[0]) @ R.T, rod._step_size * np.asarray([n]).T).T[0] + R.T @ m)
 
-            u_div = self.tubes[t].get_u_div(R, n, m, u)
-            u += u_div
+            u_div_z = u_i_star_div[2] + (rod.params['E']*rod.params['I'])/(rod.params['G']*rod.params['J'])*(u[0]*u_i_star[1]-u[1]*u_i_star[0])
 
+            u[:2] += u_div[:2]
+            u[2:] += u_div_z
 
-        ps = R.dot(np.array([[0,0,1]]).T)
-        Rs = R.dot(hat(u))
-        ns = np.sum([-self.tubes[i].params['rho'] * self.tubes[i].params['A'] * self.tubes[i].params['g'].T for i in range(0,avail_tubes)], axis=0)
-        ms = -np.cross(ps.T[0], n)
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u,step_len])
+        #if avail_tubes == 1:
+        #    pdb.set_trace()
+        if avail_tubes > 0:
+            u = np.linalg.inv(K) @ u
+            ns = np.sum([-self.tubes[i].params['rho'] * self.tubes[i].params['A'] * self.tubes[i].params['g'].T for i in range(0,avail_tubes)], axis=0)
+            ps = R.dot(np.array([[0,0,1]]).T)
+            Rs = R.dot(hat(u))
+            ms = -np.cross(ps.T[0], n)
+            return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u])
+        else:
+            return np.zeros(3+9+3+3+3)
 
 
 
@@ -411,7 +421,7 @@ if __name__ == '__main__':
     rod2.params['kappa'] = kappa
     rod2.params['straight_length'] = 0.25
 
-    ctr = CombinedTubes((rod,rod2))
+    ctr = CombinedTubes((rod2,rod))
     print(ctr.get_ordered_segments())
 
     states = ctr.calc_forward(R0, p0, np.array([0,0,0,0,0,0]), 0.1)
