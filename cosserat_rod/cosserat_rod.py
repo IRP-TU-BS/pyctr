@@ -415,6 +415,7 @@ if __name__ == '__main__':
 
     rod.params['kappa'] = kappa
     rod.params['alpha'] = np.deg2rad(0)
+    rod.params['beta'] = 0.5*337e-3
     rod.params['straight_length'] = 275e-3
 
     #####################
