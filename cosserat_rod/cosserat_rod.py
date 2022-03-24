@@ -200,10 +200,10 @@ class CurvedCosseratRod(CosseratRod):
         self.cur_kappa = kappa
         #self.params['kappa'] = kappa
 
-    def is_curved_or_there(self, s):
-        if s <= self.params['straight_length'] - self.params['beta'] and 0 < (self.params['straight_length'] - self.params['beta']):
+    def is_curved_or_at_end(self, s):
+        if s <= self.params['straight_length'] - self.params['straight_length']*self.params['beta']:
             return 0
-        elif s > self.params['L'] - self.params['beta']:
+        elif s > self.params['L'] - self.params['L']*self.params['beta']:
             return -1
         else:
             return 1
@@ -252,9 +252,10 @@ class CombinedTubes:
         p = p_init[0]
         self.step_len = step_len
         steps = int(self.tubes[0].params['L']/step_len)
+        print("steps", steps)
         s = np.linspace(0, self.tubes[0].params['L'], steps)
         state = np.hstack([p, R.reshape((1, 9))[0], wrench, np.zeros(3)])
-        return integrate.solve_ivp(self.cosserate_rod_ode, (0, self.tubes[0].params['L']), state)
+        return integrate.solve_ivp(self.cosserate_rod_ode, (0, self.tubes[0].params['L'] - self.tubes[0].params['L']*self.tubes[0].params['beta']), state, dense_output=True, max_step=step_len)
 
     def cosserate_rod_ode(self, s, state):
         R = np.reshape(state[3:12], (3, 3))
@@ -262,23 +263,28 @@ class CombinedTubes:
         m = state[15:18]
         u = state[18:21]
 
+        new_u = np.zeros(u.shape)
+
         avail_tubes = 0
 
         K = np.zeros((3,3))
 
+        #for t in range(0,len(self.tubes)):
+        #    rod = self.tubes[t]
+        #    curved_part = rod.is_curved_or_at_end(s)
+        #    if -1 == int(curved_part):
+        #        continue
+        #    avail_tubes += 1
+        #    K += rod.params['Kbt']
+
+
         for t in range(0,len(self.tubes)):
             rod = self.tubes[t]
-            curved_part = rod.is_curved_or_there(s)
+            curved_part = rod.is_curved_or_at_end(s)
             if -1 == int(curved_part):
                 continue
             avail_tubes += 1
             K += rod.params['Kbt']
-
-
-        for t in range(0,avail_tubes):
-            rod = self.tubes[t]
-            curved_part = rod.is_curved_or_there(s)
-
             if t > 0:
                 theta =  rod.params['alpha'] - self.tubes[0].params['alpha']
                 R_theta = np.array([[np.cos(theta),-np.sin(theta), 0],
@@ -292,7 +298,7 @@ class CombinedTubes:
             u_rod_skala = rod.params["kappa"]*curved_part
             rod.set_kappa(u_rod_skala)
             #u_rod = np.array([0, u_rod_skala, 0])
-            rod.inital_conditions['kappa_0'] = np.array([0, u_rod_skala, 0])
+            #rod.inital_conditions['kappa_0'] = np.array([0, u_rod_skala, 0])
 
             u_i_star = invhat((R @ R_theta).T @ ((R@R_theta) @ hat(rod.get_kappa())))
             u_i_star_div = invhat((R @ R_theta) @ hat(rod.get_kappa()))
@@ -301,20 +307,21 @@ class CombinedTubes:
 
             u_div_z = u_i_star_div[2] + (rod.params['E']*rod.params['I'])/(rod.params['G']*rod.params['J'])*(u[0]*u_i_star[1]-u[1]*u_i_star[0]) - 1/(rod.params['G']*rod.params['J'])*(rod._e3@R_theta@m)
 
-            u[:2] += u_div[:2]
-            u[2:] += u_div_z
 
-        #if avail_tubes == 1:
-        #    pdb.set_trace()
-        #if avail_tubes > 0:
-        u = np.linalg.inv(K) @ u
+            new_u[:2] += u_div[:2]
+            new_u[2:] += u_div_z
+
+        try:
+            new_u = np.linalg.inv(K) @ new_u
+        except:
+            pdb.set_trace()
+        print(new_u)
         ns = np.sum([-self.tubes[i].params['rho'] * self.tubes[i].params['A'] * self.tubes[i].params['g'].T for i in range(0,avail_tubes)], axis=0)
         ps = R.dot(np.array([[0,0,1]]).T)
-        Rs = R.dot(hat(u))
+        Rs = R.dot(hat(new_u))
         ms = -np.cross(ps.T[0], n)
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u])
-        #else:
-        #    return np.zeros(3+9+3+3+3)
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, new_u])
+
 
 
 
@@ -401,47 +408,53 @@ def single_curved_rod():
     plt.show()
 
 if __name__ == '__main__':
-    rod = CurvedCosseratRod()
     # Arbitrary base frame assignment
     p0 = np.array([[0,0,0]])
     R0 = np.eye(3)
 
-    rod.set_initial_conditions(p0, R0)
-    rod.params['L'] = 337e-3
+    #define rods
+    outer_rod = CurvedCosseratRod()
 
-    kappa = 3.4 #np.deg2rad(90) / rod.params['L']
+    outer_rod.set_initial_conditions(p0, R0)
+    outer_rod.params['L'] = 178.80* 1e-3#337e-3
+
+    kappa = 10.47#3.4 #np.deg2rad(90) / rod.params['L']
     print(kappa)
-    rod.inital_conditions['kappa_0'] = np.array([0, 0, 0])
+    outer_rod.inital_conditions['kappa_0'] = np.array([0, 0, 0])
 
-    rod.params['kappa'] = kappa
-    rod.params['alpha'] = np.deg2rad(0)
-    rod.params['beta'] = 0.5*337e-3
-    rod.params['straight_length'] = 275e-3
+    beta = 1.0
+
+    outer_rod.params['kappa'] = kappa
+    outer_rod.params['alpha'] = np.deg2rad(0)
+    outer_rod.params['beta'] = beta*178.80* 1e-3#337e-3
+    outer_rod.params['straight_length'] = (178.80-150)* 1e-3 # 275e-3
 
     #####################
-    rod2 = CurvedCosseratRod()
+    inner_rod = CurvedCosseratRod()
     # Arbitrary base frame assignment
-    rod2.set_initial_conditions(p0, R0)
-    rod2.params['L'] = 501e-3
+    inner_rod.set_initial_conditions(p0, R0)
+    inner_rod.params['L'] = 84.3* 1e-3#501e-3
 
-    kappa = 7.3 #np.deg2rad(90) / rod2.params['L']
-    rod2.inital_conditions['kappa_0'] = np.array([0, 0, 0])
+    kappa = 6.98#7.3 #np.deg2rad(90) / rod2.params['L']
+    inner_rod.inital_conditions['kappa_0'] = np.array([0, 0, 0])
     print(kappa)
-    rod2.params['kappa'] = kappa
-    rod2.params['alpha'] = 0
-    rod2.params['straight_length'] = 435e-3
+    inner_rod.params['kappa'] = kappa
+    inner_rod.params['alpha'] = 0
+    inner_rod.params['beta'] = 0.
+    inner_rod.params['straight_length'] = (84.3-75)* 1e-3#435e-3
 
-    ctr = CombinedTubes((rod2,rod))
+    ctr = CombinedTubes((inner_rod,outer_rod))
     print(ctr.get_ordered_segments())
 
-    states = ctr.calc_forward(R0, p0, np.array([0,0,-0.09,0,0,0]), 0.001)
+    states = ctr.calc_forward(R0, p0, np.array([0,0,-0.0,0,0,0]), 0.01)
 
     ax = plt.figure().add_subplot(projection='3d')
     x_vals, y_vals, z_vals = states.y.T[:, 0], states.y.T[:, 1], states.y.T[:, 2]
     ax.plot(x_vals, y_vals, z_vals, label='parametric curve')
 
-    rod.params['alpha'] = np.deg2rad(180)
-    states = ctr.calc_forward(R0, p0, np.array([0,0,0,0,0,0]), 0.001)
+    inner_rod.params['beta']  = 0.1
+    outer_rod.params['alpha'] = np.deg2rad(180)
+    states = ctr.calc_forward(R0, p0, np.array([0,0,0,0,0,0]), 0.01)
     x_vals, y_vals, z_vals = states.y.T[:, 0], states.y.T[:, 1], states.y.T[:, 2]
     ax.plot(x_vals, y_vals, z_vals, label='parametric curve')
 
