@@ -50,6 +50,8 @@ class CosseratRod:
             'p0': p0,
             'R0': R0
         }
+        # always sets thirs basis vector as up
+        self._e3 = R0[:,2:3].T
 
     def set_bounding_values(self, names, values):
         if self.bounding_values is None:
