@@ -13,8 +13,7 @@ class CosseratRod:
     parent class for all rods
     """
     def __init__(self, params=None):
-        if params is None:
-            self.params = {
+        self.params = {
             'E' :  200e9  # Young's modulus
             ,'G' : 80e9  # Shear modulus
             ,'r' : 0.001  # Cross-sectional radius
@@ -24,6 +23,9 @@ class CosseratRod:
             ,'s' : 0.2  # arc lenght steps
             ,'k': 0.16
             }
+        if not (params is None):
+            for key in params.keys():
+                self.params[key] = params[key]
 
         self.params['beta'] = 0.
 
