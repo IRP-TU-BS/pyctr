@@ -6,7 +6,7 @@ from scipy import integrate
 from scipy.optimize import least_squares
 import matplotlib.pyplot as plt
 
-from utils import *
+from .utils import *
 
 
 class CosseratRod:
@@ -27,7 +27,10 @@ class CosseratRod:
         }
         if not (params is None):
             for key in params.keys():
-                self.params[key] = params[key]
+                if key == 'g':
+                    self.params[key] = self._make_garvitational_vec( params[key], 'z')
+                else:
+                    self.params[key] = params[key]
 
         self.params['beta'] = 0.
 
@@ -71,7 +74,7 @@ class CosseratRod:
         # R = R @ R_k
         n = state[12:15]
         m = state[15:]
-        u = state[18:21]
+        #u = state[18:21]
         v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])  # TODO research
         u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m)  # TODO research
         # ode
@@ -80,7 +83,7 @@ class CosseratRod:
         Rs = R.dot(hat(u))
         ns = -self.params['rho'] * self.params['A'] * self.params['g'].T
         ms = -np.cross(ps.T[0], n)
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u])
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
 
     def shooting_function(self, guess):
         s = np.linspace(0, self.params['L'], 100)
@@ -107,12 +110,14 @@ class CosseratRod:
         return np.hstack([distal_pos_error[0], distal_rot_error])
 
     def shooting_function_force(self, guess):
-        s = np.linspace(0, self.params['L'], 100)
 
         n0 = guess[:3]
         m0 = guess[3:6]
         tip_wrench = self.bounding_values['tip_wrench']
-        states = self.apply_force(np.hstack([n0, m0]))
+
+        steps = int(np.ceil(self.params['L'] / self.params['s']))
+
+        states = self.apply_force(np.hstack([n0, m0]), steps)
         tip_wrench_shooting = states[-1][12:18]
 
         distal_force_error = tip_wrench[:3] - tip_wrench_shooting[:3]
@@ -124,7 +129,8 @@ class CosseratRod:
         self.set_bounding_values(['tip_wrench'], [wrench])
         state = np.zeros((1, 6))
         solution_bvp = least_squares(self.shooting_function_force, state[0], method='lm', loss='linear', ftol=1e-6)
-        states = self.apply_force(solution_bvp.x)
+        steps = int(np.ceil(self.params['L'] / self.params['s']))
+        states = self.apply_force(solution_bvp.x, steps)
         return states
 
     def move_end(self, p, R):
