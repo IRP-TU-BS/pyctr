@@ -2,7 +2,7 @@
 
 from distutils.core import setup
 
-setup(name='Distutils',
+setup(name='continuum_robot_models',
       version='1.0',
       description='A Python package containing implementations of cosserat rod models for concentric tube continuum robots',
       author='Heiko Donat',
