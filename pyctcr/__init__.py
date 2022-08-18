@@ -1,1 +1,2 @@
-from .cosserat_rod import CosseratRod, CurvedCosseratRod, CombinedTubes
+from .cosserat_rod import CosseratRod, CurvedCosseratRod
+from .robots import ConcentricTubeContinuumRobot

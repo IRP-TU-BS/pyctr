@@ -9,5 +9,11 @@ setup(name='continuum_robot_models',
       author_email='h.donat@tu-bs.de',
       url='https://hdonat.net/pyctcr',
       packages=['pyctcr'],
-      zip_sage=False
+      zip_sage=False,
+      install_requires=[
+            'numpy>=1.14.5',
+            'matplotlib>=2.2.0',
+            'scipy',
+            'matplotlib'
+      ]
      )
