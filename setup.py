@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-from distutils.core import setup
+from setuptools import find_packages
+from setuptools import setup
 
 setup(name='continuum_robot_models',
       version='1.0',
@@ -8,7 +9,7 @@ setup(name='continuum_robot_models',
       author='Heiko Donat',
       author_email='h.donat@tu-bs.de',
       url='https://hdonat.net/pyctcr',
-      packages=['pyctcr'],
+      packages=find_packages(exclude=('test*', 'docs')),
       zip_sage=False,
       install_requires=[
             'numpy>=1.14.5',
