@@ -93,8 +93,8 @@ class ConcentricTubeContinuumRobot:
             u_rod_skala = rod.params["kappa"] * curved_part # also weired TODO
             rod.set_kappa(u_rod_skala) # TODO more weired
 
-            u_i_star = invhat((R @ R_theta).T @ ((R @ R_theta) @ hat(rod.get_kappa())))
             u_i_star_div = invhat((R @ R_theta) @ hat(rod.get_kappa()))
+            u_i_star = invhat((R @ R_theta).T @ hat(u_i_star_div))
 
             u_div = rod.params['Kbt'] @ (-u_i_star_div) + (hat(u) @ rod.params['Kbt']) @ (u - u_i_star) - (
                         np.dot(hat(rod._e3[0]) @ R.T, rod._step_size * np.asarray([n]).T).T[0] + R.T @ m)
