@@ -8,8 +8,6 @@ import matplotlib.pyplot as plt
 
 from .utils import *
 
-from cosserat_rod import  *
-
 
 class ConcentricTubeContinuumRobot:
     """
@@ -20,9 +18,9 @@ class ConcentricTubeContinuumRobot:
 
         :param tubes: list of tubes in the robot sorted by inner to outer, longest -> shortest
         """
-        self.tubes = tubes
-        self.alphas = np.zeros(len(self.tubes)) # rotation variables
-        self.betas = np.zeros(len(self.tubes)) # elongation variables
+        self.tubes = list(zip(range(len(tubes)), tubes)) # zip with number to have an order
+        self.alphas = np.zeros(len(tubes)) # rotation variables
+        self.betas = np.zeros(len(tubes)) # elongation variables
 
         self._integrate_index = 0  #TODO ?
         self.tubes_end_indexes = [] # TODO ?
@@ -33,55 +31,57 @@ class ConcentricTubeContinuumRobot:
         Caclulates the start and end of each segment (a part of the robot that has a constant curvature)
         :return: list of sorted segment ends (starting 0 as base)
         """
-        ends = [(rod.params['straight_length'] - self.betas[i],
-                 rod.params['L'] - rod.params['straight_length'] - self.betas[i]) for i, rod in enumerate(self.tubes)]
+        ends = [(rod[1].params['straight_length'] - self.betas[i],
+                 rod[1].params['L'] - rod[1].params['straight_length'] - self.betas[i]) for i, rod in enumerate(self.tubes)]
         return list(np.sort([0] + [item for t in ends for item in t]))
-
-    @property
-    def betas(self):
-        """betas getter"""
-        return self.betas
-
-    @betas.setter
-    def betas(self, betas):
-        # TODO check beta contraints
-        self.betas = betas
 
     def calc_forward(self, R_init, p_init, wrench, step_len):
         R = R_init
         p = p_init[0]
         self.step_len = step_len
-        self._integrate_index = 0 # TODO ?
-        self.tubes_end_indexes = [] # TODO ?
-        state = np.hstack([p, R.reshape((1, 9))[0], wrench, np.zeros(3)]) # guess
-        return integrate.solve_ivp(self.cosserate_rod_ode, (
-        0, self.tubes[0].params['L'] - self.tubes[0].params['L'] * self.tubes[0].params['beta']), state,
-                                   dense_output=True, max_step=step_len) # beta is defined 0-1 -> L-L*beta  if beta 0 -> fully elongated tube
 
+        segment_list = self.get_ordered_segments()
+        ode_returns = []
+        for i in range(1,len(segment_list)):
+            self._curr_calc_tubes = [] # gather tubes that determine this segment. Attribute because it is need in ode
+            for t in self.tubes:
+                if t[1].is_curved_or_at_end(segment_list[i]) >= 0:
+                    self._curr_calc_tubes.append(t)
+
+            """
+             __guess state__
+             p - positions
+             R - orientations
+             wrench - wrench
+             uxy - curvature along x and y
+             n*uz - torsion of each tube
+            """
+
+            state = np.hstack([p, R.reshape((1, 9))[0], wrench, np.zeros(3), np.zeros(len(self.tubes))]) # guess
+
+            ode_states = integrate.solve_ivp(self.cosserate_rod_ode, (
+                segment_list[i-1], segment_list[i]), state, dense_output=True, max_step=step_len) # beta is defined 0-1 -> L-L*beta  if beta 0 -> fully elongated tube
+            p = ode_states.y.T[-1:,:3][0]
+            R = np.reshape(ode_states.y.T[-1:,3:12], (3, 3))
+            ode_returns.append(ode_states.y.T)
+        return np.vstack(ode_returns)
+
+    def get_curvature_vetor(self, kappa):
+            return np.array([0, kappa, 0])
     def cosserate_rod_ode(self, s, state):
         R = np.reshape(state[3:12], (3, 3))
         n = state[12:15]
         m = state[15:18]
         u = state[18:21]
 
-        new_u = np.zeros(u.shape) # TODO ?
+        new_u_s = np.zeros(3)
+        summed_K = np.zeros((3, 3)) # see Rucker and Webster
 
-        avail_tubes = 0 # how many tubes overlay each other
-
-        K = np.zeros((3, 3)) # ??? TODO  we add K together?
-
-        self._integrate_index += 1 # TODO ?
-
-        for t in range(0, len(self.tubes)):
-            rod = self.tubes[t]
-            curved_part = rod.is_curved_or_at_end(s) # returns 1 for curved, 0 for not curved and -1 if s > L_t
-            if -1 == int(curved_part):
-                self.tubes_end_indexes.append(self._integrate_index) # ?
-                continue
-            avail_tubes += 1 # if s is along
-            K = rod.params['Kbt']
-            if t > 0:
-                theta = rod.params['alpha'] - self.tubes[0].params['alpha']
+        tube_z_torsions = []
+        for tube in self._curr_calc_tubes:
+            curved_part = tube[1].is_curved_or_at_end(s) # returns 1 for curved, 0 for not curved and -1 if s > L_t. Last one should not occure at this point
+            if tube[0] > 0:
+                theta = tube[1].params['alpha'] - self.tubes[1][0].params['alpha']
                 R_theta = np.array([[np.cos(theta), -np.sin(theta), 0],
                                     [np.sin(theta), np.cos(theta), 0],
                                     [0, 0, 1],
@@ -89,30 +89,45 @@ class ConcentricTubeContinuumRobot:
             else:
                 R_theta = np.identity(3)
 
-            rod._step_size = self.step_len # TODO ?
-            u_rod_skala = rod.params["kappa"] * curved_part # also weired TODO
-            rod.set_kappa(u_rod_skala) # TODO more weired
+            summed_K += tube[1].params['Kbt'] # adding the Ks
 
-            u_i_star_div = invhat((R @ R_theta) @ hat(rod.get_kappa()))
+            EI = 0.0197 # tube[1].params['E'] * tube[1].params['I']
+            JG = 0.0123 # tube[1].params['G'] * tube[1].params['J']
+
+            tube_curvature = tube[1].params["kappa"] * curved_part # also weired TODO
+            u_tube = self.get_curvature_vetor(tube_curvature)
+
+            u_i_star_div = invhat((R @ R_theta) @ hat(u_tube))
             u_i_star = invhat((R @ R_theta).T @ hat(u_i_star_div))
 
-            u_div = rod.params['Kbt'] @ (-u_i_star_div) + (hat(u) @ rod.params['Kbt']) @ (u - u_i_star) - (
-                        np.dot(hat(rod._e3[0]) @ R.T, rod._step_size * np.asarray([n]).T).T[0] + R.T @ m)
+            u_div = tube[1].params['Kbt'] @ (-u_i_star_div) + (hat(u) @ tube[1].params['Kbt']) @ (u - u_i_star)
+            #- ( np.dot(hat(tube[1]._e3[0]) @ R.T, self.step_len * np.asarray([n]).T).T[0] + R.T @ m) # external
 
-            u_div_z = u_i_star_div[2] + (rod.params['E'] * rod.params['I']) / (rod.params['G'] * rod.params['J']) * (
-                        u[0] * u_i_star[1] - u[1] * u_i_star[0]) - 1 / (rod.params['G'] * rod.params['J']) * (
-                                  rod._e3 @ R_theta @ m)
+            #tube_z_torsions.append((tube[0],u_div[2]))
 
-            new_u[:2] += u_div[:2]
-            new_u[2:] += u_div_z
+            tube_z_torsions.append((tube[0],
+             u_i_star_div[2]
+            + (EI / JG) * (u[0] * u_i_star[1] - u[1] * u_i_star[0])
+            + (1 / JG) * (u_i_star[2]-u[2])))
+            #- (1 / JG) * (tube[1]._e3 @ (R @ R_theta) @ m))) # external
 
-        new_u = np.linalg.inv(K) @ new_u
-        ns = np.sum([-self.tubes[i].params['rho'] * self.tubes[i].params['A'] * self.tubes[i].params['g'].T for i in
-                     range(0, avail_tubes)], axis=0)
+            new_u_s[:2] += u_div[:2] # TODO what does 3 mean?
+
+        tube_z_torsions.sort(key=lambda y: y[0])
+        new_u_s[2:3] = tube_z_torsions[0][1]
+
+        new_u_s = np.linalg.inv(summed_K) @ new_u_s # TODO dimension missmatch
+        ns = np.sum([-self.tubes[i][1].params['rho'] * self.tubes[i][1].params['A'] * self.tubes[i][1].params['g'].T for i in
+                     range(len(self._curr_calc_tubes))], axis=0)
         ps = R.dot(np.array([[0, 0, 1]]).T)
-        Rs = R.dot(hat(new_u))
+        Rs = R.dot(hat(new_u_s))
         ms = -np.cross(ps.T[0], n)
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, new_u])
+        return np.hstack([ps.T[0],
+                          np.reshape(Rs, (1, 9))[0],
+                          ns.T[0],
+                          ms,
+                          new_u_s,
+                          np.asarray([u[1] for u in tube_z_torsions])[0]])
 
     def set_bounding_values(self, names, values):
         if self.bounding_values is None:
@@ -139,14 +154,14 @@ class ConcentricTubeContinuumRobot:
         return valid
 
     def _apply_fwd_static(self, wrench, step_size=0.01):
-        state = self.calc_forward(self.tubes[0].inital_conditions['R0'], self.tubes[0].inital_conditions['p0'],
+        state = self.calc_forward(self.tubes[0][1].inital_conditions['R0'], self.tubes[0][1].inital_conditions['p0'],
                                   np.asarray(wrench), step_size)
         return state
 
     def fwd_static(self, wrench, step_size=0.01):
         state = self._apply_fwd_static(wrench, step_size)
-        positions = state.y.T[:, :3]
-        orientations = state.y.T[:, 3:12]
+        positions = state[:, :3]
+        orientations = state[:, 3:12]
         return positions, orientations
 
     def shooting_function_force(self, guess):
