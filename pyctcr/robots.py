@@ -98,7 +98,7 @@ class ConcentricTubeContinuumRobot:
                                     [np.cos(0), -np.sin(0), 0],
                                     [0, 0, 0],
                                     ])
-                u1 =
+
             theta_ds = state[21+tube[0]] - state[21]
 
             summed_K += tube[1].params['Kbt'] # adding the Ks
@@ -112,7 +112,10 @@ class ConcentricTubeContinuumRobot:
             u_i_star_ds = invhat((R @ R_theta) @ hat(u_tube))
             u_i_star = invhat((R @ R_theta).T @ hat(u_i_star_ds))
 
-            u_div = R_theta @ (tube[1].params['Kbt'] @ (theta_ds*R_theta_dtheta@-u_i_star_ds) + (hat(u) @ tube[1].params['Kbt']) @ (u - u_i_star)) \
+            u_i = u.copy()
+            u_i[2] = state[21+tube[0]]
+
+            u_div = R_theta @ (tube[1].params['Kbt'] @ (theta_ds*R_theta_dtheta@np.reshape(u,(u.shape[0],-1))-u_i_star_ds) + (hat(u) @ tube[1].params['Kbt']) @ (u_i - u_i_star)) \
                     - ( np.dot(hat(tube[1]._e3[0]) @ R.T, self.step_len * np.asarray([n]).T).T[0] + R.T @ m) # external
 
             #tube_z_torsions.append((tube[0],u_div[2]))
