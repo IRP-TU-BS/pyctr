@@ -39,6 +39,7 @@ class ConcentricTubeContinuumRobot:
         R = R_init
         p = p_init[0]
         self.step_len = step_len
+        w = wrench
 
         segment_list = self.get_ordered_segments()
         ode_returns = []
@@ -57,17 +58,18 @@ class ConcentricTubeContinuumRobot:
              n*uz - torsion of each tube
             """
 
-            state = np.hstack([p, R.reshape((1, 9))[0], wrench, np.zeros(3), np.zeros(len(self.tubes))]) # guess
+            state = np.hstack([p, R.reshape((1, 9))[0], w, np.zeros(3), np.zeros(len(self.tubes))]) # guess
 
             ode_states = integrate.solve_ivp(self.cosserate_rod_ode, (
                 segment_list[i-1], segment_list[i]), state, dense_output=True, max_step=step_len) # beta is defined 0-1 -> L-L*beta  if beta 0 -> fully elongated tube
             p = ode_states.y.T[-1:,:3][0]
             R = np.reshape(ode_states.y.T[-1:,3:12], (3, 3))
+            w = ode_states.y.T[-1,12:18]
             ode_returns.append(ode_states.y.T)
         return np.vstack(ode_returns)
 
-    def get_curvature_vetor(self, kappa):
-            return np.array([0, kappa, 0])
+    def get_curvature_vector(self, kappa):
+            return np.array([0, kappa, 0]) # we consider that the curvature is defined over y
     def cosserate_rod_ode(self, s, state):
         R = np.reshape(state[3:12], (3, 3))
         n = state[12:15]
@@ -86,30 +88,40 @@ class ConcentricTubeContinuumRobot:
                                     [np.sin(theta), np.cos(theta), 0],
                                     [0, 0, 1],
                                     ])
+                R_theta_dtheta = np.array([[-np.sin(theta), -np.cos(theta), 0],
+                                    [np.cos(theta), -np.sin(theta), 0],
+                                    [0, 0, 0],
+                                    ])
             else:
                 R_theta = np.identity(3)
+                R_theta_dtheta = np.array([[-np.sin(0), -np.cos(0), 0],
+                                    [np.cos(0), -np.sin(0), 0],
+                                    [0, 0, 0],
+                                    ])
+                u1 =
+            theta_ds = state[21+tube[0]] - state[21]
 
             summed_K += tube[1].params['Kbt'] # adding the Ks
 
-            EI = 0.0197 # tube[1].params['E'] * tube[1].params['I']
-            JG = 0.0123 # tube[1].params['G'] * tube[1].params['J']
+            EI = tube[1].params['E'] * tube[1].params['I']
+            JG = tube[1].params['G'] * tube[1].params['J']
 
             tube_curvature = tube[1].params["kappa"] * curved_part # also weired TODO
-            u_tube = self.get_curvature_vetor(tube_curvature)
+            u_tube = self.get_curvature_vector(tube_curvature)
 
-            u_i_star_div = invhat((R @ R_theta) @ hat(u_tube))
-            u_i_star = invhat((R @ R_theta).T @ hat(u_i_star_div))
+            u_i_star_ds = invhat((R @ R_theta) @ hat(u_tube))
+            u_i_star = invhat((R @ R_theta).T @ hat(u_i_star_ds))
 
-            u_div = tube[1].params['Kbt'] @ (-u_i_star_div) + (hat(u) @ tube[1].params['Kbt']) @ (u - u_i_star)
-            #- ( np.dot(hat(tube[1]._e3[0]) @ R.T, self.step_len * np.asarray([n]).T).T[0] + R.T @ m) # external
+            u_div = R_theta @ (tube[1].params['Kbt'] @ (theta_ds*R_theta_dtheta@-u_i_star_ds) + (hat(u) @ tube[1].params['Kbt']) @ (u - u_i_star)) \
+                    - ( np.dot(hat(tube[1]._e3[0]) @ R.T, self.step_len * np.asarray([n]).T).T[0] + R.T @ m) # external
 
             #tube_z_torsions.append((tube[0],u_div[2]))
 
             tube_z_torsions.append((tube[0],
-             u_i_star_div[2]
+             u_i_star_ds[2]
             + (EI / JG) * (u[0] * u_i_star[1] - u[1] * u_i_star[0])
-            + (1 / JG) * (u_i_star[2]-u[2])))
-            #- (1 / JG) * (tube[1]._e3 @ (R @ R_theta) @ m))) # external
+            + (1 / JG) * (u_i_star[2]-u[2])
+            - (1 / JG) * (tube[1]._e3 @ (R @ R_theta) @ m))) # external
 
             new_u_s[:2] += u_div[:2] # TODO what does 3 mean?
 
