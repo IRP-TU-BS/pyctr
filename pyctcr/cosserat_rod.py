@@ -16,14 +16,15 @@ class CosseratRod:
 
     def __init__(self, params=None):
         self.params = {
-            'E': 200e9  # Young's modulus
-            , 'G': 80e9  # Shear modulus
-            , 'r': 0.001  # Cross-sectional radius
-            , 'rho': 8000  # Density
+            'E': 339889091.1107947  # Young's modulus - Nylon Taulmann3d 618 Nylon
+            , 'G': 97898219.42862949  # Shear modulus - Nylon Taulmann3d 618 Nylon
+            , 'r_inner': 0.  # Cross-sectional radius
+            , 'r_outer': 1.4 * 1e-3 # m
+            , 'rho': 8000  # Density - wrong
             , 'g': self._make_garvitational_vec(9.81, 'z')  # Gravitational acceleration
-            , 'L': 5.0  # Length (before s')'
-            , 's': 0.2  # arc lenght steps
-            , 'k': 0.16
+            , 'L': 150 * 1e-3  # Length (before s')'
+            , 's': 1e-3  # arc lenght steps
+            , 'kappa': 10.47
         }
         if not (params is None):
             for key in params.keys():
@@ -34,9 +35,9 @@ class CosseratRod:
 
         self.params['beta'] = 0.
 
-        self.params['A'] = np.pi * self.params['r'] ** 2  # Cross-sectional area
-        self.params['I'] = np.pi * self.params['r'] ** 4 / 4  # Area moment of inertia
-        self.params['J'] = 2 * self.params['I']  # Polar moment of inertia
+        self.params['A'] = np.pi * (self.params['r_outer'] ** 2 -self.params['r_inner'] ** 2)  # Cross-sectional area
+        self.params['I'] = np.pi/4 * (self.params['r_outer'] ** 4 - self.params['r_inner'] ** 4)  # Area moment of inertia
+        self.params['J'] = (np.pi * ((2*self.params['r_outer']) ** 4 - (2*self.params['r_inner']) ** 4))/32.  # Polar moment of inertia
 
         self.params['Kse'] = np.diag([self.params['G'] * self.params['A'], self.params['G'] * self.params['A'],
                                       self.params['E'] * self.params['A']])  # Stiffness matrices
