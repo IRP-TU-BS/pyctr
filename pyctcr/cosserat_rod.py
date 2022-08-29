@@ -6,7 +6,7 @@ from scipy import integrate
 from scipy.optimize import least_squares
 import matplotlib.pyplot as plt
 
-from utils import *
+from .utils import *
 
 
 class CosseratRod:

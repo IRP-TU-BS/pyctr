@@ -154,12 +154,18 @@ class ConcentricTubeContinuumRobot:
 
     def rotate(self, alphas):
         for i in range(len(self.tubes)):
-            self.tubes[i].params["alpha"] = alphas[i]
+            self.tubes[i][1].params["alpha"] = alphas[i]
+            self.alphas[i] = alphas[i]
+        self.tubes[0][1].inital_conditions['R0'] = np.array([[np.cos(alphas[0]), -np.sin(alphas[0]), 0],
+                  [np.sin(alphas[0]), np.cos(alphas[0]), 0],
+                  [0, 0, 1],
+                  ])
 
     def translate(self, betas):
         if self._check_beta_validity(betas):
             for i in range(len(self.tubes)):
-                self.tubes[i].params["beta"] = betas[i]
+                self.tubes[i][1].params["beta"] = betas[i]
+                self.betas[i] = betas[i]
         else:
             raise Exception('Parameter Error', 'The beta values do not correspond to the specifications!')
 
@@ -205,8 +211,8 @@ class ConcentricTubeContinuumRobot:
 
 class CTCRExternalForces(ConcentricTubeContinuumRobot):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self,tubes):
+        super().__init__(tubes)
 
 
     def cosserate_rod_ode(self, s, state):
@@ -283,6 +289,7 @@ class CTCRExternalForces(ConcentricTubeContinuumRobot):
         self._gaussiansx = gaussiansx
         self._gaussiansy = gaussiansy
         state = self._apply_fwd_static(np.zeros(6),step_size)
-        positions = state.y.T[:, :3]
-        orientations = state.y.T[:, 3:12]
-        return positions, orientations
+        positions = state[:, :3]
+        orientations = state[:, 3:12]
+        wrenches = state[:,12:18]
+        return positions, orientations, wrenches
