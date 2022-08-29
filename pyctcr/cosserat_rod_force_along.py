@@ -1,6 +1,10 @@
 import numpy as np
 
 from cosserat_rod import *
+from enum import Enum
+class Force_Model(Enum):
+    GAUSSIAN = 1
+    FOURIER = 2
 
 import pdb
 
@@ -9,13 +13,16 @@ class StraightCosseratRod(CosseratRod):
     A class describing a straight rod with the capability to be pushed on several sides along the rods body
     """
 
-    def __init__(self, params=None):
+    def __init__(self, params=None, force_model = Force_Model.GAUSSIAN):
         super(StraightCosseratRod, self).__init__(params)
-
+        self._force_model = force_model
         self._ax = np.array([0, 1])
         self._ay = np.array([0, 1])
         self._bx = np.array([0, 1])
         self._by = np.array([0, 1])
+
+        self._gaussiansx = [(1,1,0.05)]
+        self._gaussiansy = [(1,1,0.05)]
 
     def cosserate_rod_ode(self, state, s):
         R = np.reshape(state[3:12], (3, 3))
@@ -28,7 +35,8 @@ class StraightCosseratRod(CosseratRod):
         ps = R.dot(v.T)
 
         Rs = R.dot(hat(u))
-        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T + self.external_forces(s)
+        external_forces = self.external_gauss_forces(s) if self._force_model == Force_Model.GAUSSIAN else self.external_forces(s)
+        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T + external_forces
         ms = -np.cross(ps.T[0], n)
         #pdb.set_trace()
         return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
@@ -46,6 +54,12 @@ class StraightCosseratRod(CosseratRod):
              + np.sum(self._by[1:] * np.sin((s * np.pi *
                                              np.linspace(1, self._by[1:].shape[0], self._by[1:].shape[0])) \
                                             / self.params['L']))
+        return np.array([[fx, fy, 0]]).T
+
+    def external_gauss_forces(self, s):
+
+        fx = np.sum([self._gaussiansx[i][0]*np.exp(-self._gaussiansx[i][1]*(s-self._gaussiansx[i][2])**2) for i in range(len(self._gaussiansx))])
+        fy = np.sum([self._gaussiansy[i][0] * np.exp(-self._gaussiansy[i][1] * (s - self._gaussiansy[i][2]) ** 2) for i in range(len(self._gaussiansy))])
         return np.array([[fx, fy, 0]]).T
 
     def shooting_function_force(self, guess):

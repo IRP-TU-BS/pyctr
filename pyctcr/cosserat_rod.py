@@ -6,7 +6,7 @@ from scipy import integrate
 from scipy.optimize import least_squares
 import matplotlib.pyplot as plt
 
-from .utils import *
+from utils import *
 
 
 class CosseratRod:
@@ -23,6 +23,7 @@ class CosseratRod:
             , 'rho': 8000  # Density - wrong
             , 'g': self._make_garvitational_vec(9.81, 'z')  # Gravitational acceleration
             , 'L': 150 * 1e-3  # Length (before s')'
+            ,'straight_length': 0.
             , 's': 1e-3  # arc lenght steps
             , 'kappa': 10.47
         }
