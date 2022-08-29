@@ -201,3 +201,88 @@ class ConcentricTubeContinuumRobot:
         positions = states.y.T[:, :3]
         orientations = states.y.T[:, 3:12]
         return positions, orientations
+
+
+class CTCRExternalForces(ConcentricTubeContinuumRobot):
+
+    def __init__(self):
+        super().__init__()
+
+
+    def cosserate_rod_ode(self, s, state):
+        R = np.reshape(state[3:12], (3, 3))
+        n = state[12:15]
+        m = state[15:18]
+        u = state[18:21]
+
+        new_u_s = np.zeros(3)
+        summed_K = np.zeros((3, 3)) # see Rucker and Webster
+
+        tube_z_torsions = []
+        tube_uzs = np.zeros(len(self.tubes)).tolist()
+        for tube in self._curr_calc_tubes:
+            curved_part = tube[1].is_curved_or_at_end(s) # returns 1 for curved, 0 for not curved and -1 if s > L_t. Last one should not occure at this point
+
+            theta = self.alphas[tube[0]] - self.alphas[self.tubes[0][0]]
+            R_theta = np.array([[np.cos(theta), -np.sin(theta), 0],
+                                    [np.sin(theta), np.cos(theta), 0],
+                                    [0, 0, 1],
+                                    ])
+            R_theta_dtheta = np.array([[-np.sin(theta), -np.cos(theta), 0],
+                                    [np.cos(theta), -np.sin(theta), 0],
+                                    [0, 0, 0],
+                                    ])
+
+            theta_ds = state[21+tube[0]] - state[21]
+
+            summed_K += tube[1].params['Kbt'] # adding the Ks
+
+            EI = tube[1].params['E'] * tube[1].params['I']
+            JG = tube[1].params['G'] * tube[1].params['J']
+
+            tube_curvature = tube[1].params["kappa"] * curved_part # also weired TODO
+            u_tube = self.get_curvature_vector(tube_curvature)
+
+            u_i_star_ds = invhat((R @ R_theta) @ hat(u_tube))
+            u_i_star = invhat((R @ R_theta).T @ hat(u_i_star_ds))
+
+            u_i = u.copy()
+            u_i[2] = state[21+tube[0]]
+
+            u_div = R_theta @ (tube[1].params['Kbt'] @ (theta_ds*R_theta_dtheta@u-u_i_star_ds) + (hat(u) @ tube[1].params['Kbt']) @ (u_i - u_i_star)) \
+                    - ( np.dot(hat(tube[1]._e3[0]) @ R.T, self.step_len * np.asarray([n]).T).T[0] + R.T @ m) # external
+
+            tube_uzs[tube[0]]= u_div[2]
+
+            new_u_s[:2] += u_div[:2] # TODO what does 3 mean?
+
+        new_u_s[2:3] = tube_uzs[0]
+
+        new_u_s = np.linalg.inv(summed_K) @ new_u_s # TODO dimension missmatch
+        ns = self.external_gauss_forces(s)
+        #np.sum([-self.tubes[i][1].params['rho'] * self.tubes[i][1].params['A'] * self.tubes[i][1].params['g'].T for i in
+             #        range(len(self._curr_calc_tubes))], axis=0)
+        ps = R.dot(np.array([[0, 0, 1]]).T)
+        Rs = R.dot(hat(new_u_s))
+        ms = -np.cross(ps.T[0], n)
+
+        return np.hstack([ps.T[0],
+                          np.reshape(Rs, (1, 9))[0],
+                          ns.T[0],
+                          ms,
+                          new_u_s,
+                          tube_uzs])
+
+    def external_gauss_forces(self, s):
+
+        fx = np.sum([self._gaussiansx[i][0]*np.exp(-self._gaussiansx[i][1]*(s-self._gaussiansx[i][2])**2) for i in range(len(self._gaussiansx))])
+        fy = np.sum([self._gaussiansy[i][0] * np.exp(-self._gaussiansy[i][1] * (s - self._gaussiansy[i][2]) ** 2) for i in range(len(self._gaussiansy))])
+        return np.array([[fx, fy, 0]]).T
+
+    def fwd_external_gaussian_forces(self, gaussiansx, gaussiansy, step_size=0.01):
+        self._gaussiansx = gaussiansx
+        self._gaussiansy = gaussiansy
+        state = self._apply_fwd_static(np.zeros(6),step_size)
+        positions = state.y.T[:, :3]
+        orientations = state.y.T[:, 3:12]
+        return positions, orientations
