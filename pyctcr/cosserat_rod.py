@@ -232,18 +232,15 @@ class CurvedCosseratRod(CosseratRod):
         m = state[15:18]
         u = state[18:21]
 
-        u_div = self.get_u_div(R, n, m, u)
-        # u_state = np.hstack([n,m,u,state[3:12],step_size])
-        # u_states = integrate.odeint(self.curvature_ode, u_state, u_s)
-        u = u + u_div  # u_states[-1,6:9]
-        # print(u_states[:,6:9])
+        u_i_star_ds = invhat(R @ hat(u))
+        u_div = u_i_star_ds + self.get_u_div(R, n, m, u)
 
         ps = R.dot(self._e3.T)  # simplification -> Kirchoff rod
         Rs = R.dot(hat(u))
         #pdb.set_trace()
-        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T + self._external_force(s)
+        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T #+ self._external_force(s)
         ms = -np.cross(ps.T[0], n)
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u])
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms, u_div])
 
     def get_kappa(self):
         return np.array([0, self.cur_kappa, 0])
@@ -262,25 +259,36 @@ class CurvedCosseratRod(CosseratRod):
 
 
     def apply_force(self, wrench, steps=100):
+        #pdb.set_trace()
         self._step_size = self.params['L'] / steps
         step_size_straight = int(steps * self.params['straight_length'] / self.params['L'])
         step_size_curved = int(steps * (self.params['L'] - self.params['straight_length']) / self.params['L'])
         # straight part
         p0, R0 = self.inital_conditions['p0'], self.inital_conditions['R0']
         curved_kappa = self.params['kappa']
-        self.set_kappa(0)
-        kappa_0 = self.get_kappa()
-        s = np.linspace(0, self.params['straight_length'], step_size_straight)
-        state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench, kappa_0])
-        straight_states = integrate.odeint(self.cosserate_rod_ode, state, s)
-        p0 = straight_states[-1][:3]
-        R0 = straight_states[-1][3:12]
+        states = None
+        start_integration_length = 0
+        if step_size_straight > 0:
+            self.set_kappa(0)
+            kappa_0 = self.get_kappa()
+            s = np.linspace(0, self.params['straight_length'], step_size_straight)
+            state = np.hstack([p0.flatten(), R0.reshape((1, 9)).flatten(), wrench, kappa_0])
+            straight_states = integrate.odeint(self.cosserate_rod_ode, state, s)
+            p0 = straight_states[-1][:3]
+            R0 = straight_states[-1][3:12]
+            wrench = straight_states[-1][12:18]
+            u = straight_states[-1][18:]
+            states = straight_states
+            start_integration_length = self.params['straight_length']
         self.set_kappa(curved_kappa)
-        kappa_0 = self.get_kappa()
-        s = np.linspace(0, self.params['L'] - self.params['straight_length'], step_size_curved)
-        state = np.hstack([p0, R0, wrench, kappa_0])
+        kappa_0 = self.get_kappa() + u
+        s = np.linspace(start_integration_length, self.params['L'], step_size_curved)
+        state = np.hstack([p0.flatten(), R0.reshape((1, 9)).flatten(), wrench, kappa_0])
         curved_states = integrate.odeint(self.cosserate_rod_ode, state, s)
-        states = np.vstack([straight_states, curved_states])
+        if not (states is None):
+            states = np.vstack([states, curved_states])
+        else:
+            states = curved_states
         return states
 
 
