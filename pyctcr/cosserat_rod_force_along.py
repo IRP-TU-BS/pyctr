@@ -1,19 +1,23 @@
 import numpy as np
 
-from cosserat_rod import *
+from .cosserat_rod import *
 from enum import Enum
+
+
 class Force_Model(Enum):
     GAUSSIAN = 1
     FOURIER = 2
 
+
 import pdb
+
 
 class StraightCosseratRod(CosseratRod):
     """
     A class describing a straight rod with the capability to be pushed on several sides along the rods body
     """
 
-    def __init__(self, params=None, force_model = Force_Model.GAUSSIAN):
+    def __init__(self, params=None, force_model=Force_Model.GAUSSIAN):
         super(StraightCosseratRod, self).__init__(params)
         self._force_model = force_model
         self._ax = np.array([0, 1])
@@ -21,24 +25,27 @@ class StraightCosseratRod(CosseratRod):
         self._bx = np.array([0, 1])
         self._by = np.array([0, 1])
 
-        self._gaussiansx = [(1,1,0.05)]
-        self._gaussiansy = [(1,1,0.05)]
+        self._gaussiansx = [(0, 0, 0)]  # just to have a zero for the summation
+        self._gaussiansy = [(0, 0, 0)]
 
     def cosserate_rod_ode(self, state, s):
+        #print(s)
         R = np.reshape(state[3:12], (3, 3))
         n = state[12:15]
         m = state[15:]
-        #u = state[18:21]
-        v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])
-        u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m)  # TODO research
+        # u = state[18:21]
+        #v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])
+        u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m)   # TODO research
         # ode
-        ps = R.dot(v.T)
+        ps = R.dot(np.array([[0,0,1]]).T)
 
         Rs = R.dot(hat(u))
-        external_forces = self.external_gauss_forces(s) if self._force_model == Force_Model.GAUSSIAN else self.external_forces(s)
-        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T + external_forces
+        external_forces = self.external_gauss_forces(
+            s) if self._force_model == Force_Model.GAUSSIAN else self.external_forces(s)
+        #ns = -self.params['rho'] * self.params['A'] * self.params['g'].T + external_forces
+        ns = -external_forces
         ms = -np.cross(ps.T[0], n)
-        #pdb.set_trace()
+        # pdb.set_trace()
         return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
 
     def external_forces(self, s):
@@ -57,9 +64,12 @@ class StraightCosseratRod(CosseratRod):
         return np.array([[fx, fy, 0]]).T
 
     def external_gauss_forces(self, s):
-
-        fx = np.sum([self._gaussiansx[i][0]*np.exp(-self._gaussiansx[i][1]*(s-self._gaussiansx[i][2])**2) for i in range(len(self._gaussiansx))])
-        fy = np.sum([self._gaussiansy[i][0] * np.exp(-self._gaussiansy[i][1] * (s - self._gaussiansy[i][2]) ** 2) for i in range(len(self._gaussiansy))])
+        fx = np.sum(
+            [self._gaussiansx[i][0] * np.exp(-self._gaussiansx[i][1] * (s - self._gaussiansx[i][2]) ** 2) for i in
+             range(len(self._gaussiansx))])
+        fy = np.sum(
+            [self._gaussiansy[i][0] * np.exp(-self._gaussiansy[i][1] * (s - self._gaussiansy[i][2]) ** 2) for i in
+             range(len(self._gaussiansy))])
         return np.array([[fx, fy, 0]]).T
 
     def shooting_function_force(self, guess):
