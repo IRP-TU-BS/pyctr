@@ -34,7 +34,7 @@ class ConcentricTubeContinuumRobot:
         ends = [(rod[1].params['straight_length'] - rod[1].params['L']*(self.betas[i]),
                  rod[1].params['L'] - rod[1].params['straight_length'] - rod[1].params['L']*(self.betas[i])) for i, rod in enumerate(self.tubes)]
         sorted_ends = np.sort([0] + [item for t in ends for item in t])
-        sorted_ends = sorted_ends[sorted_ends > 0]
+        sorted_ends = sorted_ends[sorted_ends >= 0]
         return list(sorted_ends)
 
     def calc_forward(self, R_init, p_init, wrench, step_len):
@@ -360,25 +360,27 @@ class CTCRExternalForces(ConcentricTubeContinuumRobot):
         fy = np.sum([self._gaussians[i][0][1] * np.exp(-self._gaussians[i][1] * (s - self._gaussians[i][2]) ** 2) for i in range(len(self._gaussians))])
         return np.array([[fx, fy, 0]]).T
 
-    def fwd_external_gaussian_forces(self, gaussians, step_size=0.01):
+    def fwd_external_gaussian_forces(self, gaussians, step_size=0.01, pos_indexes=False):
         self._gaussians = gaussians
         self.tubes[0][1]._gaussians = gaussians
 
         wrench = np.zeros(6)
         solution_bvp = least_squares(self.shooting_function_external_force, wrench, method='lm', loss='linear',
                                      ftol=1e-6)
-        state = self._apply_fwd_static(solution_bvp.x,step_size)
+        state, pos_indexes = self._apply_fwd_static(solution_bvp.x,step_size)
         positions = state[:, :3]
         orientations = state[:, 3:12]
         wrenches = state[:,12:18]
-        return positions, orientations, wrenches
+        if pos_indexes:
+            return positions, orientations, wrenches, pos_indexes
+        else:
+            return positions, orientations, wrenches
 
 
-    def apply_external_forces(self):
-        state = np.zeros((1, 6))
-        solution_bvp = least_squares(self.shooting_function_external_force, state[0], method='lm', loss='linear', ftol=1e-6)
-        states = self.apply_force(solution_bvp.x)
-        return states
+    def _apply_fwd_static(self, wrench, step_size=0.01):
+        state, pos_indexes = self.calc_forward(self.tubes[0][1].inital_conditions['R0'], self.tubes[0][1].inital_conditions['p0'],
+                                  np.asarray(wrench), step_size)
+        return state, pos_indexes
 
     def calc_forward(self, R_init, p_init, wrench, step_len):
         R = R_init
@@ -392,6 +394,7 @@ class CTCRExternalForces(ConcentricTubeContinuumRobot):
         for i in range(len(self.tubes)):
             thetas.append(self.alphas[self.tubes[i][0]] - self.alphas[self.tubes[0][0]])
         uzs = np.zeros(len(self.tubes))
+        position_indexes = []
         for i in range(1,len(segment_list)):
             self._curr_calc_tubes = [] # gather tubes that determine this segment. Attribute because it is need in ode
             for t in self.tubes:
@@ -418,14 +421,15 @@ class CTCRExternalForces(ConcentricTubeContinuumRobot):
             uzs = ode_states.y.T[-1,18:18+len(self.tubes)]
             thetas = ode_states.y.T[-1,18+len(self.tubes):]
             ode_returns.append(ode_states.y.T)
-        return np.vstack(ode_returns)
+            position_indexes.append(ode_states.y.T[:,:3].shape[0])
+        return np.vstack(ode_returns), position_indexes
 
 
-    def shooting_function_external_force(self, guess, s_l = 100):
+    def shooting_function_external_force(self, guess, s_l = 0.01):
         n0 = guess[:3]
         m0 = guess[3:6]
         tip_wrench = np.zeros(6)
-        states = self._apply_fwd_static(np.hstack([n0, m0]), s_l)
+        states, _ = self._apply_fwd_static(np.hstack([n0, m0]), s_l)
         tip_wrench_shooting = states[-1,12:18]
 
         return np.hstack([(tip_wrench - tip_wrench_shooting)**2])
