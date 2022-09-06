@@ -33,7 +33,7 @@ class ConcentricTubeContinuumRobot:
         """
         ends = [(rod[1].params['straight_length'] - self.betas[i],
                  rod[1].params['L'] - rod[1].params['straight_length'] - self.betas[i]) for i, rod in enumerate(self.tubes)]
-        return list(np.sort([0] + [item for t in ends for item in t]))
+        return list(np.sort([item for t in ends for item in t]))
 
     def calc_forward(self, R_init, p_init, wrench, step_len):
         R = R_init
@@ -219,77 +219,211 @@ class CTCRExternalForces(ConcentricTubeContinuumRobot):
         R = np.reshape(state[3:12], (3, 3))
         n = state[12:15]
         m = state[15:18]
-        u = state[18:21]
+        uzs = []
+        thetas = []
+        for i in range(len(self._curr_calc_tubes)):
+            uzs.append(state[18+i:18+(i+1)].item())
 
-        new_u_s = np.zeros(3)
-        summed_K = np.zeros((3, 3)) # see Rucker and Webster
+        for i in range(len(self._curr_calc_tubes)):
+            thetas.append(state[18+len(self.tubes)+i:18+len(self.tubes)+(i+1)].item())
 
-        tube_z_torsions = []
-        tube_uzs = np.zeros(len(self.tubes)).tolist()
-        for tube in self._curr_calc_tubes:
-            curved_part = tube[1].is_curved_or_at_end(s) # returns 1 for curved, 0 for not curved and -1 if s > L_t. Last one should not occure at this point
+        EIk = 0
+        for i in range(len(self._curr_calc_tubes)):
+            EIk += self.tubes[i][1].params['Kbt'][0,0]
 
-            theta = self.alphas[tube[0]] - self.alphas[self.tubes[0][0]]
-            R_theta = np.array([[np.cos(theta), -np.sin(theta), 0],
-                                    [np.sin(theta), np.cos(theta), 0],
-                                    [0, 0, 1],
-                                    ])
-            R_theta_dtheta = np.array([[-np.sin(theta), -np.cos(theta), 0],
-                                    [np.cos(theta), -np.sin(theta), 0],
-                                    [0, 0, 0],
-                                    ])
+        RthetaEkIkuj_star = np.zeros((3,1)) # PhD Rucker page 91 eq 3.56 last part
 
-            theta_ds = state[21+tube[0]] - state[21]
+        for i in range(len(self._curr_calc_tubes)):
+            Rtheta =  np.array([[np.cos(thetas[i]), -np.sin(thetas[i]), 0],
+                                     [np.sin(thetas[i]), np.cos(thetas[i]), 0],
+                                     [0, 0, 1],
+                                     ])
+            EIj = self.tubes[i][1].params['Kbt'][0, 0]
 
-            summed_K += tube[1].params['Kbt'] # adding the Ks
 
-            EI = tube[1].params['E'] * tube[1].params['I']
-            JG = tube[1].params['G'] * tube[1].params['J']
+            curved_part = self.tubes[i][1].is_curved_or_at_end(s)
+            tube_curvature = self.tubes[i][1].params["kappa"] * curved_part  # also weired TODO
+            uj_star = self.get_curvature_vector(tube_curvature)
+            RthetaEkIkuj_star += EIj*Rtheta@uj_star.reshape(-1,1)
 
-            tube_curvature = tube[1].params["kappa"] * curved_part # also weired TODO
-            u_tube = self.get_curvature_vector(tube_curvature)
 
-            u_i_star_ds = invhat((R @ R_theta) @ hat(u_tube))
-            u_i_star = invhat((R @ R_theta).T @ hat(u_i_star_ds))
+        u1 = (1/EIk * (m + RthetaEkIkuj_star.T))
 
-            u_i = u.copy()
-            u_i[2] = state[21+tube[0]]
+        uixy = []
+        for i in range(1,len(self._curr_calc_tubes)):
+            Rtheta =  np.array([[np.cos(thetas[i]), -np.sin(thetas[i]), 0],
+                                     [np.sin(thetas[i]), np.cos(thetas[i]), 0],
+                                     [0, 0, 1],
+                                     ])
+            uixy.append((Rtheta@u1.T).T[0,:2])
+        uixy = [u1[0,:2]] + uixy
 
-            u_div = R_theta @ (tube[1].params['Kbt'] @ (theta_ds*R_theta_dtheta@u-u_i_star_ds) + (hat(u) @ tube[1].params['Kbt']) @ (u_i - u_i_star)) \
-                    - ( np.dot(hat(tube[1]._e3[0]) @ R.T, self.step_len * np.asarray([n]).T).T[0] + R.T @ m) # external
+        external_forces = self.tubes[0][1].external_gauss_forces(s)
 
-            tube_uzs[tube[0]]= u_div[2]
+        #ode
+        ps = R@self.tubes[0][1]._e3.T
+        Rs = R@hat(u1.T)
+        thetas_s = []
+        for i in range(len(self._curr_calc_tubes)):
+            thetas_s.append(uzs[i]-uzs[0])
 
-            new_u_s[:2] += u_div[:2] # TODO what does 3 mean?
+        uiz_s = []
+        for i in range(1, len(self._curr_calc_tubes)):
+            curved_part = self.tubes[i][1].is_curved_or_at_end(s)
+            tube_curvature = self.tubes[i][1].params["kappa"] * curved_part  # also weired TODO
+            ui_star = self.get_curvature_vector(tube_curvature)
+            EIi = self.tubes[i][1].params['Kbt'][0, 0]
+            GJi = self.tubes[i][1].params['Kbt'][2, 2]
+            uiz_s.append(ui_star[2] + EIi/GJi * (uixy[i][0]*ui_star[1] - uixy[i][1]*ui_star[0])) # - 1/GJi)
+        uiz_s = [u1[0,2]] + uiz_s
 
-        new_u_s[2:3] = tube_uzs[0]
+        uzs = np.zeros(len(self.tubes))
+        thetas = np.zeros(len(self.tubes))
+        for i in range(len(self._curr_calc_tubes)):
+            uzs[i] = uiz_s[i]
+            thetas[i] = thetas_s[i]
 
-        new_u_s = np.linalg.inv(summed_K) @ new_u_s # TODO dimension missmatch
-        ns = self.external_gauss_forces(s)
-        #np.sum([-self.tubes[i][1].params['rho'] * self.tubes[i][1].params['A'] * self.tubes[i][1].params['g'].T for i in
-             #        range(len(self._curr_calc_tubes))], axis=0)
-        ps = R.dot(np.array([[0, 0, 1]]).T)
-        Rs = R.dot(hat(new_u_s))
-        ms = -np.cross(ps.T[0], n)
+        ns = -R@external_forces
+        msbxy = -hat(u1.T)@m.T-hat(self.tubes[0][1]._e3.T)@R.T@n # - R.T@l
 
-        return np.hstack([ps.T[0],
-                          np.reshape(Rs, (1, 9))[0],
-                          ns.T[0],
-                          ms,
-                          new_u_s,
-                          tube_uzs])
+        return np.hstack([ps.T.flatten(), Rs.reshape((1,9)).flatten(), ns.flatten(), msbxy.flatten(), np.hstack(uzs), np.hstack(thetas)])
+
+
+    # def cosserate_rod_ode(self, s, state):
+    #     R = np.reshape(state[3:12], (3, 3))
+    #     n = state[12:15]
+    #     m = state[15:18]
+    #     u = state[18:21]
+    #
+    #     new_u_s = np.zeros(3)
+    #     summed_K = np.zeros((3, 3)) # see Rucker and Webster
+    #
+    #     tube_z_torsions = []
+    #     tube_uzs = np.zeros(len(self.tubes)).tolist()
+    #     for tube in self._curr_calc_tubes:
+    #         curved_part = tube[1].is_curved_or_at_end(s) # returns 1 for curved, 0 for not curved and -1 if s > L_t. Last one should not occure at this point
+    #
+    #         theta = self.alphas[tube[0]] - self.alphas[self.tubes[0][0]]
+    #         R_theta = np.array([[np.cos(theta), -np.sin(theta), 0],
+    #                                 [np.sin(theta), np.cos(theta), 0],
+    #                                 [0, 0, 1],
+    #                                 ])
+    #         R_theta_dtheta = np.array([[-np.sin(theta), -np.cos(theta), 0],
+    #                                 [np.cos(theta), -np.sin(theta), 0],
+    #                                 [0, 0, 0],
+    #                                 ])
+    #
+    #         theta_ds = state[21+tube[0]] - state[21]
+    #
+    #         summed_K += tube[1].params['Kbt'] # adding the Ks
+    #
+    #         EI = tube[1].params['E'] * tube[1].params['I']
+    #         JG = tube[1].params['G'] * tube[1].params['J']
+    #
+    #         tube_curvature = tube[1].params["kappa"] * curved_part # also weired TODO
+    #         u_tube = self.get_curvature_vector(tube_curvature)
+    #
+    #         u_i_star_ds = invhat((R @ R_theta) @ hat(u_tube))
+    #         u_i_star = invhat((R @ R_theta).T @ hat(u_i_star_ds))
+    #
+    #         u_i = u.copy()
+    #         u_i[2] = state[21+tube[0]]
+    #
+    #         u_div = R_theta @ (tube[1].params['Kbt'] @ (theta_ds*R_theta_dtheta@u-u_i_star_ds) + (hat(u) @ tube[1].params['Kbt']) @ (u_i - u_i_star)) \
+    #                 - (np.dot(hat(tube[1]._e3[0]) @ R.T, self.step_len * np.asarray([n]).T).T[0] + R.T @ m)  # external
+    #
+    #         tube_uzs[tube[0]]= u_div[2]
+    #
+    #         new_u_s[:2] += u_div[:2] # TODO what does 3 mean?
+    #
+    #     new_u_s[2:3] = tube_uzs[0]
+    #
+    #     new_u_s = np.linalg.inv(summed_K) @ new_u_s # TODO dimension missmatch
+    #     ns = np.sum([-self.tubes[i][1].params['rho'] * self.tubes[i][1].params['A'] * self.tubes[i][1].params['g'].T for i in
+    #                  range(len(self._curr_calc_tubes))], axis=0) - self.external_gauss_forces(s)
+    #     ps = R.dot(np.array([[0, 0, 1]]).T)
+    #     Rs = R.dot(hat(new_u_s))
+    #     ms = -np.cross(ps.T[0], n)
+    #
+    #     return np.hstack([ps.T[0],
+    #                       np.reshape(Rs, (1, 9))[0],
+    #                       ns.T[0],
+    #                       ms,
+    #                       new_u_s,
+    #                       tube_uzs])
 
     def external_gauss_forces(self, s):
 
-        fx = np.sum([self._gaussiansx[i][0]*np.exp(-self._gaussiansx[i][1]*(s-self._gaussiansx[i][2])**2) for i in range(len(self._gaussiansx))])
-        fy = np.sum([self._gaussiansy[i][0] * np.exp(-self._gaussiansy[i][1] * (s - self._gaussiansy[i][2]) ** 2) for i in range(len(self._gaussiansy))])
+        fx = np.sum([self._gaussians[i][0][0]*np.exp(-self._gaussians[i][1]*(s-self._gaussians[i][2])**2) for i in range(len(self._gaussians))])
+        fy = np.sum([self._gaussians[i][0][1] * np.exp(-self._gaussians[i][1] * (s - self._gaussians[i][2]) ** 2) for i in range(len(self._gaussians))])
         return np.array([[fx, fy, 0]]).T
 
-    def fwd_external_gaussian_forces(self, gaussiansx, gaussiansy, step_size=0.01):
-        self._gaussiansx = gaussiansx
-        self._gaussiansy = gaussiansy
-        state = self._apply_fwd_static(np.zeros(6),step_size)
+    def fwd_external_gaussian_forces(self, gaussians, step_size=0.01):
+        self._gaussians = gaussians
+        self.tubes[0][1]._gaussians = gaussians
+
+        wrench = np.zeros(6)
+        solution_bvp = least_squares(self.shooting_function_external_force, wrench, method='lm', loss='linear',
+                                     ftol=1e-6)
+        state = self._apply_fwd_static(solution_bvp.x,step_size)
         positions = state[:, :3]
         orientations = state[:, 3:12]
         wrenches = state[:,12:18]
         return positions, orientations, wrenches
+
+
+    def apply_external_forces(self):
+        state = np.zeros((1, 6))
+        solution_bvp = least_squares(self.shooting_function_external_force, state[0], method='lm', loss='linear', ftol=1e-6)
+        states = self.apply_force(solution_bvp.x)
+        return states
+
+    def calc_forward(self, R_init, p_init, wrench, step_len):
+        R = R_init
+        p = p_init[0]
+        self.step_len = step_len
+        w = wrench
+
+        segment_list = self.get_ordered_segments()
+        ode_returns = []
+        thetas = []
+        for i in range(len(self.tubes)):
+            thetas.append(self.alphas[self.tubes[i][0]] - self.alphas[self.tubes[0][0]])
+        uzs = np.zeros(len(self.tubes))
+        for i in range(1,len(segment_list)):
+            self._curr_calc_tubes = [] # gather tubes that determine this segment. Attribute because it is need in ode
+            for t in self.tubes:
+                if t[1].is_curved_or_at_end(segment_list[i]) >= 0:
+                    self._curr_calc_tubes.append(t)
+
+            """
+             __guess state__
+             p - positions
+             R - orientations
+             wrench - wrench
+             uxy - curvature along x and y
+             n*uz - torsion of each tube
+             n*thetas - difference in rotation
+            """
+
+            state = np.hstack([p, R.reshape((1, 9))[0], w, uzs, thetas]) # guess
+
+            ode_states = integrate.solve_ivp(self.cosserate_rod_ode, (
+                segment_list[i-1], segment_list[i]), state, dense_output=True, max_step=step_len) # beta is defined 0-1 -> L-L*beta  if beta 0 -> fully elongated tube
+            p = ode_states.y.T[-1:,:3][0]
+            R = np.reshape(ode_states.y.T[-1:,3:12], (3, 3))
+            w = ode_states.y.T[-1,12:18]
+            uzs = ode_states.y.T[-1,18:18+len(self.tubes)]
+            thetas = ode_states.y.T[-1,18+len(self.tubes):]
+            ode_returns.append(ode_states.y.T)
+        return np.vstack(ode_returns)
+
+
+    def shooting_function_external_force(self, guess, s_l = 100):
+        n0 = guess[:3]
+        m0 = guess[3:6]
+        tip_wrench = np.zeros(6)
+        states = self._apply_fwd_static(np.hstack([n0, m0]), s_l)
+        tip_wrench_shooting = states[-1,12:18]
+
+        return np.hstack([(tip_wrench - tip_wrench_shooting)**2])
