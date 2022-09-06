@@ -31,9 +31,11 @@ class ConcentricTubeContinuumRobot:
         Caclulates the start and end of each segment (a part of the robot that has a constant curvature)
         :return: list of sorted segment ends (starting 0 as base)
         """
-        ends = [(rod[1].params['straight_length'] - self.betas[i],
-                 rod[1].params['L'] - rod[1].params['straight_length'] - self.betas[i]) for i, rod in enumerate(self.tubes)]
-        return list(np.sort([item for t in ends for item in t]))
+        ends = [(rod[1].params['straight_length'] - rod[1].params['L']*(self.betas[i]),
+                 rod[1].params['L'] - rod[1].params['straight_length'] - rod[1].params['L']*(self.betas[i])) for i, rod in enumerate(self.tubes)]
+        sorted_ends = np.sort([0] + [item for t in ends for item in t])
+        sorted_ends = sorted_ends[sorted_ends > 0]
+        return list(sorted_ends)
 
     def calc_forward(self, R_init, p_init, wrench, step_len):
         R = R_init
@@ -172,8 +174,8 @@ class ConcentricTubeContinuumRobot:
     def _check_beta_validity(self, betas):
         valid = True
         for i in range(1, np.asarray(betas).shape[0]):
-            valid = valid and betas[i - 1] <= betas[i]
-            valid = valid and betas[i] * self.tubes[i].params['L'] <= betas[i - 1] * self.tubes[i - 1].params['L']
+            valid = valid and betas[i - 1] >= betas[i]
+            valid = valid and (1-betas[i]) * self.tubes[i][1].params['L'] <= (1-betas[i - 1]) * self.tubes[i - 1][1].params['L']
         return valid
 
     def _apply_fwd_static(self, wrench, step_size=0.01):
