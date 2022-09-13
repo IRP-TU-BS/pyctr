@@ -32,7 +32,7 @@ class ConcentricTubeContinuumRobot:
         :return: list of sorted segment ends (starting 0 as base)
         """
         ends = [(rod[1].params['straight_length'] - rod[1].params['L']*(self.betas[i]),
-                 rod[1].params['L'] - rod[1].params['straight_length'] - rod[1].params['L']*(self.betas[i])) for i, rod in enumerate(self.tubes)]
+                 rod[1].params['L']  - rod[1].params['L']*(self.betas[i])) for i, rod in enumerate(self.tubes)]
         sorted_ends = np.sort([0] + [item for t in ends for item in t])
         sorted_ends = sorted_ends[sorted_ends >= 0]
         return list(sorted_ends)
