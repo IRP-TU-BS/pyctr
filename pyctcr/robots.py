@@ -174,8 +174,9 @@ class ConcentricTubeContinuumRobot:
     def _check_beta_validity(self, betas):
         valid = True
         for i in range(1, np.asarray(betas).shape[0]):
-            valid = valid and betas[i - 1] >= betas[i]
-            valid = valid and (1-betas[i]) * self.tubes[i][1].params['L'] <= (1-betas[i - 1]) * self.tubes[i - 1][1].params['L']
+            #valid = valid and betas[i - 1] <= betas[i]
+            #print(valid)
+            valid = valid and self.tubes[i][1].params['L'] -betas[i] * self.tubes[i][1].params['L'] <= self.tubes[i - 1][1].params['L'] -  betas[i - 1] * self.tubes[i - 1][1].params['L']
         return valid
 
     def _apply_fwd_static(self, wrench, step_size=0.01):
