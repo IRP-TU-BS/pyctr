@@ -361,7 +361,7 @@ class CTCRExternalForces(ConcentricTubeContinuumRobot):
         fy = np.sum([self._gaussians[i][0][1] * np.exp(-self._gaussians[i][1] * (s - self._gaussians[i][2]) ** 2) for i in range(len(self._gaussians))])
         return np.array([[fx, fy, 0]]).T
 
-    def fwd_external_gaussian_forces(self, gaussians, step_size=0.01, pos_indexes=False):
+    def fwd_external_gaussian_forces(self, gaussians, step_size=0.001, pos_indexes=False):
         self._gaussians = gaussians
         self.tubes[0][1]._gaussians = gaussians
 
@@ -378,7 +378,7 @@ class CTCRExternalForces(ConcentricTubeContinuumRobot):
             return positions, orientations, wrenches
 
 
-    def _apply_fwd_static(self, wrench, step_size=0.01):
+    def _apply_fwd_static(self, wrench, step_size=0.001):
         state, pos_indexes = self.calc_forward(self.tubes[0][1].inital_conditions['R0'], self.tubes[0][1].inital_conditions['p0'],
                                   np.asarray(wrench), step_size)
         return state, pos_indexes
