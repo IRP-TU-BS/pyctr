@@ -1,39 +1,32 @@
 import numpy as np
 
-from cosserat_rod import *
+from .cosserat_rod import *
+from enum import Enum
+
+
+class Force_Model(Enum):
+    GAUSSIAN = 1
+    FOURIER = 2
+
 
 import pdb
 
-class StraightCosseratRod(CosseratRod):
-    """
-    A class describing a straight rod with the capability to be pushed on several sides along the rods body
-    """
+class ExtForceRod(object):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs) # This class is a mixin
+        self._gaussians = [((0,0), 0, 0)]  # just to have a zero for the summation
 
-    def __init__(self, params=None):
-        super(StraightCosseratRod, self).__init__(params)
+    def external_gauss_forces(self, s):
+        fx = np.sum(
+            [self._gaussians[i][0][0] * np.exp(-self._gaussians[i][1] * (s - self._gaussians[i][2]) ** 2) for i in
+             range(len(self._gaussians))])
+        fy = np.sum(
+            [self._gaussians[i][0][1] * np.exp(-self._gaussians[i][1] * (s - self._gaussians[i][2]) ** 2) for i in
+             range(len(self._gaussians))])
+        return np.array([[fx, fy, 0]]).T
 
-        self._ax = np.array([0, 1])
-        self._ay = np.array([0, 1])
-        self._bx = np.array([0, 1])
-        self._by = np.array([0, 1])
 
-    def cosserate_rod_ode(self, state, s):
-        R = np.reshape(state[3:12], (3, 3))
-        n = state[12:15]
-        m = state[15:]
-        #u = state[18:21]
-        v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])
-        u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m)  # TODO research
-        # ode
-        ps = R.dot(v.T)
-
-        Rs = R.dot(hat(u))
-        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T + self.external_forces(s)
-        ms = -np.cross(ps.T[0], n)
-        #pdb.set_trace()
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
-
-    def external_forces(self, s):
+    def external_fourier_forces(self, s):
         fx = self._ax[0] + np.sum(self._ax[1:] * np.sin((s * np.pi *
                                                          np.linspace(1, self._ax[1:].shape[0], self._ax[1:].shape[0])) \
                                                         / self.params['L'])) \
@@ -48,27 +41,101 @@ class StraightCosseratRod(CosseratRod):
                                             / self.params['L']))
         return np.array([[fx, fy, 0]]).T
 
-    def shooting_function_force(self, guess):
-        s = np.linspace(0, self.params['L'], 100)
 
-        n0 = guess[:3]
-        m0 = guess[3:6]
-        tip_wrench = np.zeros(6)
-        states = self.apply_force(np.hstack([n0, m0]))
-        tip_wrench_shooting = states[-1][12:18]
-
-        distal_force_error = tip_wrench[:3] - tip_wrench_shooting[:3]
-        distal_moment_error = invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[3:])) - hat(tip_wrench[3:]).dot(
-            hat(tip_wrench_shooting[3:]).T))
-        return np.hstack([distal_force_error, distal_moment_error])
-
-    def push_end(self, wrench):
-        self.set_bounding_values(['tip_wrench'], [wrench])
+    def apply_external_forces(self):
         state = np.zeros((1, 6))
-        solution_bvp = least_squares(self.shooting_function_force, state[0], method='lm', loss='linear', ftol=1e-6)
+        solution_bvp = least_squares(self.shooting_function_external_force, state[0], method='lm', loss='linear', ftol=1e-6)
         states = self.apply_force(solution_bvp.x)
         return states
 
 
-if __name__ == "__main__":
-    pass
+    def shooting_function_external_force(self, guess, s_l = 100):
+        #gaussian_indexes = []
+        #for gauss in self._gaussians:
+        #    gaussian_indexes.append(int((gauss[2] / self.params['L']) * (s_l - 1)))
+
+        n0 = guess[:3]
+        m0 = guess[3:6]
+        tip_wrench = np.zeros(6)
+        states = self.apply_force(np.hstack([n0, m0]), s_l)
+        tip_wrench_shooting = states[-1,12:18]
+        #diff_sums = (np.linalg.norm(states[:,12:18]) - np.sqrt(np.pi/(self._gaussians[0][1]+0.000000001))*np.linalg.norm(np.asarray(self._gaussians[0][0])))**2
+
+        return np.hstack([(tip_wrench - tip_wrench_shooting)**2])
+
+
+class StraightCosseratRod(ExtForceRod, CosseratRod):
+    """
+    A class describing a straight rod with the capability to be pushed on several sides along the rods body
+    """
+
+    def __init__(self, params=None, force_model=Force_Model.GAUSSIAN):
+        super().__init__(params)
+        self._force_model = force_model
+
+    def cosserate_rod_ode(self, state, s):
+        R = np.reshape(state[3:12], (3, 3))
+        n = state[12:15]
+        m = state[15:]
+        u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m) #+ self.get_kappa()  
+        # ode
+        ps = R.dot(np.array([[0,0,1]]).T)
+
+        Rs = R.dot(hat(u))
+        external_forces = self.external_gauss_forces(
+            s) if self._force_model == Force_Model.GAUSSIAN else self.external_fourier_forces(s)
+        #ns = -self.params['rho'] * self.params['A'] * self.params['g'].T + external_forces
+        ns = - R@external_forces
+        ms = -np.cross(ps.T[0], n)
+
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
+
+
+
+class CurvedCosseratRodExt(ExtForceRod, CurvedCosseratRod):
+    """
+    A class describing a straight rod with the capability to be pushed on several sides along the rods body
+    """
+
+    def __init__(self, params=None, force_model=Force_Model.GAUSSIAN):
+        super().__init__(params)
+        self._force_model = force_model
+
+    # def cosserate_rod_ode(self, state, s):
+    #     R = np.reshape(state[3:12], (3, 3))
+    #     # R_k = hat(np.array([0,0,self.params['k']]))
+    #     # R = R @ R_k
+    #     n = state[12:15]
+    #     m = state[15:18]
+    #     u = state[18:21]
+    #
+    #     u_i_star_ds = invhat(R @ hat(u))
+    #     #u_div = u_i_star_ds + #self.get_u_div(R, n, m, u)
+    #
+    #
+    #     ps = R.dot(self._e3.T)  # simplification -> Kirchoff rod
+    #     Rs = R.dot(hat(u))
+    #     external_forces = self.external_gauss_forces(
+    #         s) if self._force_model == Force_Model.GAUSSIAN else self.external_forces(s)
+    #     #ns = -self.params['rho'] * self.params['A'] * self.params['g'].T - R@external_forces
+    #     ns = -R@external_forces
+    #     ms = -np.cross(ps.T[0], n)
+    #     return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
+
+    def cosserate_rod_ode(self, state, s):
+        R = np.reshape(state[3:12], (3, 3))
+        n = state[12:15]
+        m = state[15:]
+        u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m) + self.get_kappa()
+        external_forces = self.external_gauss_forces(
+            s) if self._force_model == Force_Model.GAUSSIAN else self.external_fourier_forces(s)
+
+        # ode
+        ps = R.dot(self._e3.T)
+        Rs = R.dot(hat(u))
+        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T - R@external_forces
+        ms = -np.cross(ps.T[0], n) # -l = 0
+
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
+
+

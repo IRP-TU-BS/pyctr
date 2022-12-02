@@ -161,7 +161,10 @@ class CosseratRod:
         return states
 
     def is_curved_or_at_end(self, s):
-        return 0
+        if s <= self.params['straight_length'] - self.params['straight_length'] * self.params['beta']:
+            return 0
+        elif s > self.params['L'] - self.params['L'] * self.params['beta']:
+            return -1
 
     def get_kappa(self):
         return np.array([0, self.cur_kappa, 0])
