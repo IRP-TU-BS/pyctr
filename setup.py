@@ -12,6 +12,7 @@ setup(name='continuum_robot_models',
       packages=find_packages(exclude=('test*', 'docs')),
       zip_sage=False,
       install_requires=[
+            'importlib-metadata; python_version<"3.8"',
             'numpy>=1.14.5',
             'matplotlib>=2.2.0',
             'scipy',
