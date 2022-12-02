@@ -214,7 +214,7 @@ class ConcentricTubeContinuumRobot:
         uiz_s = []
         for i in range(1, len(self._curr_calc_tubes)):
             curved_part = self.tubes[i][1].is_curved_or_at_end(s)
-            tube_curvature = self.tubes[i][1].params["kappa"] * curved_part  
+            tube_curvature = self.tubes[i][1].params["kappa"] * curved_part
             ui_star = self.get_curvature_vector(tube_curvature)
             EIi = self.tubes[i][1].params['Kbt'][0, 0]
             GJi = self.tubes[i][1].params['Kbt'][2, 2]
