@@ -1,3 +1,4 @@
 tubes:
-    0: 'example_robots/rods/curved_tube_inner.yaml'
-    1: 'example_robots/rods/curved_tube_outer.yaml'
+    0: 'rods/curved_tube_inner.yaml'
+    1: 'rods/curved_tube_outer.yaml'
+

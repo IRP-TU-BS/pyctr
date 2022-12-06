@@ -35,6 +35,7 @@ class CosseratRod:
                     self.params[key] = params[key]
 
         self.params['beta'] = 0.
+        self.params['alpha'] = 0.
 
         self.params['A'] = np.pi * (self.params['r_outer'] ** 2 -self.params['r_inner'] ** 2)  # Cross-sectional area
         self.params['I'] = np.pi/4 * (self.params['r_outer'] ** 4 - self.params['r_inner'] ** 4)  # Area moment of inertia

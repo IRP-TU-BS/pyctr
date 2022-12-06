@@ -76,9 +76,11 @@ class ConcentricTubeContinuumRobot:
         Caclulates the start and end of each segment (a part of the robot that has a constant curvature)
         :return: list of sorted segment ends (starting 0 as base)
         """
-        ends = [(rod[1].params['straight_length'] - self.betas[i],
-                 rod[1].params['L'] - rod[1].params['straight_length'] - self.betas[i]) for i, rod in enumerate(self.tubes)]
-        return list(np.sort([0] + [item for t in ends for item in t]))
+        ends = [(rod[1].params['straight_length'] - rod[1].params['L']*(self.betas[i]),
+                 rod[1].params['L']  - rod[1].params['L']*(self.betas[i])) for i, rod in enumerate(self.tubes)]
+        sorted_ends = np.sort([0] + [item for t in ends for item in t])
+        sorted_ends = sorted_ends[sorted_ends >= 0]
+        return list(sorted_ends)
 
     def rotate(self, alphas: Union[list, npt.ArrayLike]):
         """
@@ -88,7 +90,8 @@ class ConcentricTubeContinuumRobot:
         :return: None
         """
         for i in range(len(self.tubes)):
-            self.tubes[i].params["alpha"] = alphas[i]
+            self.tubes[i][1].params["alpha"] = alphas[i]
+            self.alphas[i] = alphas[i]
 
     def translate(self, betas: Union[list, npt.ArrayLike]):
         """
@@ -100,7 +103,8 @@ class ConcentricTubeContinuumRobot:
         """
         if self._check_beta_validity(betas):
             for i in range(len(self.tubes)):
-                self.tubes[i].params["beta"] = betas[i]
+                self.tubes[i][1].params["beta"] = betas[i]
+                self.betas[i] = betas[i]
         else:
             raise Exception('Parameter Error', 'The beta values do not correspond to the specifications!')
     def calc_forward(self, wrench: Union[list, npt.ArrayLike], step_len: float):
@@ -152,7 +156,7 @@ class ConcentricTubeContinuumRobot:
             thetas = ode_states.y.T[-1, 18 + len(self.tubes):]
             ode_returns.append(ode_states.y.T)
             current_seg_point += ode_states.y.T[:, :3].shape[0]
-            seg_indexes.append(current_seg_point)
+            seg_indexes.append((len(self._curr_calc_tubes), current_seg_point))
         return np.vstack(ode_returns), seg_indexes
 
     def cosserate_rod_ode(self, s, state):
@@ -278,8 +282,7 @@ class ConcentricTubeContinuumRobot:
         """
         valid = True
         for i in range(1, np.asarray(betas).shape[0]):
-            valid = valid and betas[i - 1] <= betas[i]
-            valid = valid and betas[i] * self.tubes[i].params['L'] <= betas[i - 1] * self.tubes[i - 1].params['L']
+            valid = valid and self.tubes[i][1].params['L'] -betas[i] * self.tubes[i][1].params['L'] <= self.tubes[i - 1][1].params['L'] -  betas[i - 1] * self.tubes[i - 1][1].params['L']
         return valid
 
     def fwd_static(self, wrench, step_size: float = 0.01):
@@ -321,6 +324,16 @@ class ConcentricTubeContinuumRobot:
         positions, orientations, _, _, _ = self.fwd_static_with_boundarys(state, shooting_function_force)
         self.remove_boundary_condition("tip_wrench")
         return positions, orientations
+
+    def get_tube_outer_radii(self):
+        """
+        Helper function to get fast information about tube size
+        :return:
+        """
+        outer_radii = []
+        for t in self.tubes:
+            outer_radii.append(t[1].params['r_outer'])
+        return outer_radii
 
 
 """
