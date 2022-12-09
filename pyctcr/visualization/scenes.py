@@ -1,23 +1,28 @@
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from matplotlib.animation import FuncAnimation
+from functools import partial
 import numpy as np
 import warnings
+
+
 class Engine:
     def __init__(self) -> object:
         self.plotted_robots = {}
 
-    def plot_robot_pos(self, pos, segments, radii, number_of_tubes, name ="robot"):
+    def plot_robot_pos(self, pos, segments, radii, number_of_tubes, name="robot"):
         self.displ_fwd(pos, segments, radii, number_of_tubes, name)
 
-    def displ_fwd(self, pos, segments, radii, number_of_tubes, name ="robot"):
+    def displ_fwd(self, pos, segments, radii, number_of_tubes, name="robot"):
         pass
+
 
 class MatplotLib(Engine):
     def __init__(self):
         super().__init__()
         self.colors = list(mcolors.XKCD_COLORS.keys())
-        self.ax = plt.figure().add_subplot(projection='3d')
-
+        self.fig = plt.figure()
+        self.ax = self.fig.add_subplot(projection='3d')
 
     def set_axes_equal(self, ax):
         '''Make axes of 3D plot have equal scale so that spheres appear as spheres,
@@ -47,43 +52,61 @@ class MatplotLib(Engine):
         ax.set_ylim3d([y_middle - plot_radius, y_middle + plot_radius])
         ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
 
-    def add_robot(self,radii, number_of_tubes, name ="robot"):
+    def add_robot(self, radii, number_of_tubes, name="robot"):
         if not (name in self.plotted_robots):
             robot_seg_dict = {}
-            for i in number_of_tubes:
+            for i in range(number_of_tubes):
                 seg1, = self.ax.plot([0], [0], [0],
-                             linewidth=radii[i] * 1e3, label=name, c=self.colors[i])
-                robot_seg_dict[name+'tube'+str(i)+'seg1'] = seg1
+                                     linewidth=radii[i] * 1e3, label=name, c=self.colors[i])
+                robot_seg_dict[name + 'tube' + str(i+1) + 'seg1'] = seg1
                 seg2, = self.ax.plot([0], [0], [0],
-                             linewidth=radii[i] * 1e3, label=name, c=self.colors[i])
-                robot_seg_dict[name + 'tube' + str(i) + 'seg2'] = seg2
+                                     linewidth=radii[i] * 1e3, label=name, c=self.colors[i])
+                robot_seg_dict[name + 'tube' + str(i+1) + 'seg2'] = seg2
                 segshad1, = self.ax.plot([0], [0], zs=0, zdir='z', c='gray',
-                             alpha=0.7, linewidth=radii[i] * 1e3)
-                robot_seg_dict[name + 'tube' + str(i) + 'segshad1'] = segshad1
+                                         alpha=0.7, linewidth=radii[i] * 1e3)
+                robot_seg_dict[name + 'tube' + str(i+1) + 'segshad1'] = segshad1
                 segshad2, = self.ax.plot([0], [0], zs=0, zdir='z', c='gray',
-                             alpha=0.7, linewidth=radii[i] * 1e3)
-                robot_seg_dict[name + 'tube' + str(i) + 'segshad2'] = segshad2
+                                         alpha=0.7, linewidth=radii[i] * 1e3)
+                robot_seg_dict[name + 'tube' + str(i+1) + 'segshad2'] = segshad2
             self.plotted_robots[name] = robot_seg_dict
 
-    def displ_fwd(self, pos, segments, radii, number_of_tubes, name ="robot"):
+    def displ_fwd(self, pos, segments, radii, number_of_tubes, name="robot"):
         last_ind = 0
+        seg_data = []
+        for i in range(number_of_tubes,0,-1):
+            seg_dat = []
+            for seg in segments[1:]:
+                if seg[0] == i:
+                    seg_dat.append(pos[last_ind:seg[1],:])
+                    last_ind = seg[1]
+            if len(seg_dat)<2:
+                seg_dat.append(np.zeros((1,3)))
+            seg_data.append(seg_dat)
 
-        for i, seg in enumerate(segments[1:]):
-            seg_index = seg[1]
-            radindex = seg[0] - 1
-            radi = radii[radindex]
-            #if name in self.plotted_robots:
+        #print(seg_data)
+        #print(segments)
+        for i in range(number_of_tubes):
+            for j in range(2):
+                self.plotted_robots[name][name + 'tube' + str(i+1) + 'seg' + str(j+1)].set_data(seg_data[i][j][:,0],
+                                                                                            seg_data[i][j][:, 1],
+                                                                                            )
+                self.plotted_robots[name][name + 'tube' + str(i+1) + 'seg' + str(j+1)].set_3d_properties(seg_data[i][j][:, 2]
+                                                                                            )
 
-            #else:
-            self.ax.plot(pos[last_ind:seg_index,0], pos[last_ind:seg_index,1], pos[last_ind:seg_index,2], linewidth=radi*1e3,  label=name, c=self.colors[radindex])
-            self.ax.plot(pos[last_ind:seg_index,0], pos[last_ind:seg_index,1], zs=0, zdir='z', c='gray', alpha=0.7, linewidth=radi*1e3)
-            last_ind = seg_index
+
 
         self.set_axes_equal(self.ax)
 
-    def show(self):
-        plt.show()
+    def show(self, frames, robots):
 
+        for name in frames.keys():
+            ani = FuncAnimation(
+                self.fig, partial(self.displ_fwd, segments=robots[name].get_segments(),
+                                  radii=robots[name].get_radi_for_segments(),
+                                  number_of_tubes=robots[name].num_of_tubes, name=name),
+                frames=frames[name],
+                blit=False)
+        plt.show()
 
 
 class Scene:
@@ -94,26 +117,27 @@ class Scene:
     def __init__(self, engine, path):
         self.scene_objects = {}
         self.robots = {}
-        self.robot_fames = {}
+        self.robot_frames = {}
 
         self.engine = engine
 
-
-    def add_robot(self,name,  robot):
+    def add_robot(self, name, robot):
         if name in self.robots.keys():
             warnings.warn("robot name already used. Replace robot.")
-
         self.robots[name] = robot
+        self.robot_frames[name] = []
+        self.engine.add_robot(self.robots[name].get_radi_for_segments(),
+                              self.robots[name].num_of_tubes,
+                              name)
 
     def update(self):
         for rob in self.robots.keys():
             positions, _, _, _, _ = self.robots[rob].calc_fwd()
-            self.engine.plot_robot_pos(positions, self.robots[rob].get_segments(), self.robots[rob].get_radi_for_segments(),
-                                       self.robots[rob].num_of_tubes)
+            self.robot_frames[rob].append(positions)
 
     def show(self):
+        self.engine.show(self.robot_frames, self.robots)
 
-        self.engine.show()
 
 class Robot:
     def __init__(self, model_class_factory_function, config_path):

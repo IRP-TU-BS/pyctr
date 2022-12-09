@@ -15,10 +15,10 @@ class RobotTestCase(unittest.TestCase):
         test_scene = Scene(MatplotLib(), None)
         robot = Robot(load_continous_ctcr_model, "../example_robots/ctr_robot.yaml")
         test_scene.add_robot('ctcr', robot)
-        robot.set_config(alphas=[np.pi/2, 0], betas=[0,0.5])
-        test_scene.update()
-        robot.set_config(alphas=[np.pi / 2, -np.pi/2], betas=[0, 0.])
-        test_scene.update()
+        beta = np.linspace(0,0.5,100)
+        for i,alpha in enumerate(np.linspace(0,np.pi/2,100)):
+            robot.set_config(alphas=[-alpha, alpha], betas=[0,beta[i]])
+            test_scene.update()
         test_scene.show()
 
 if __name__ == '__main__':
