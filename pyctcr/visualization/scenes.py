@@ -1,6 +1,10 @@
+# matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.animation import FuncAnimation
+
+from vispy import app, scene
+
 from functools import partial
 import numpy as np
 import warnings
@@ -16,6 +20,16 @@ class Engine:
     def displ_fwd(self, pos, segments, radii, number_of_tubes, name="robot"):
         pass
 
+class VisPy(Engine):
+    def __init__(self):
+        self.canvas = scene.SceneCanvas(title='Simple NetworkX Graph', size=(600, 600),
+                                   bgcolor='white', show=True)
+        self.view = self.canvas.central_widget.add_view('panzoom')
+
+    def display_fwd(self, pos, segments, radii, number_of_tubes, name="robot"):
+        self.robot_seg_dict = {}
+        for i in range(number_of_tubes):
+            tube = scene.Tube(pos=pos, radius=radii[i]*1e3, num_sides=12)
 
 class MatplotLib(Engine):
     def __init__(self):
