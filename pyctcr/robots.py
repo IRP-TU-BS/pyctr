@@ -318,10 +318,10 @@ class ConcentricTubeContinuumRobot:
         solution_bvp = least_squares(shooting_function, state, method='lm', loss='linear', ftol=1e-6, args=(self, step_size))
         return self.fwd_static(solution_bvp.x)
 
-    def push_end(self, wrench):
+    def push_end(self, wrench, step_size = 0.01):
         self.set_boundary_condition(['tip_wrench'], [wrench])
         state = np.zeros(6)
-        positions, orientations, _, _, _ = self.fwd_static_with_boundarys(state, shooting_function_force)
+        positions, orientations, _, _, _ = self.fwd_static_with_boundarys(state, shooting_function_force, step_size)
         self.remove_boundary_condition("tip_wrench")
         return positions, orientations
 
