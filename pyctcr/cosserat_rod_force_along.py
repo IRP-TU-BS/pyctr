@@ -77,7 +77,7 @@ class StraightCosseratRod(ExtForceRod, CosseratRod):
         R = np.reshape(state[3:12], (3, 3))
         n = state[12:15]
         m = state[15:]
-        u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m) #+ self.get_kappa()  # TODO research
+        u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m) #+ self.get_kappa()  
         # ode
         ps = R.dot(np.array([[0,0,1]]).T)
 
@@ -126,7 +126,7 @@ class CurvedCosseratRodExt(ExtForceRod, CurvedCosseratRod):
         R = np.reshape(state[3:12], (3, 3))
         n = state[12:15]
         m = state[15:]
-        u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m) + self.get_kappa()  # TODO research
+        u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m) + self.get_kappa()
         external_forces = self.external_gauss_forces(
             s) if self._force_model == Force_Model.GAUSSIAN else self.external_fourier_forces(s)
 
@@ -139,8 +139,3 @@ class CurvedCosseratRodExt(ExtForceRod, CurvedCosseratRod):
         return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
 
 
-
-
-
-if __name__ == "__main__":
-    pass

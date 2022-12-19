@@ -1,0 +1,9 @@
+L: 185.
+curved_len: 90.
+kappa: 11.636
+E: 339889091.1107947  # Young's modulus - Nylon Taulmann3d 618 Nylon
+G: 97898219.42862949  # Shear modulus - Nylon Taulmann3d 618 Nylon
+r_inner: 0.5 * 1e-3   # Cross-sectional radius
+r_outer: 1.25 * 1e-3   # Cross-sectional radius
+rho: 8000  # Density
+g: 0  # Gravitational acceleration
