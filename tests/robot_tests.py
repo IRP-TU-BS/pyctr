@@ -33,5 +33,6 @@ class RobotTestCase(unittest.TestCase):
         ctr.fwd_static([0,0.1,0,0,0,0])
         ctr.push_end([0,0,0,0,0,0])
 
+
 if __name__ == '__main__':
     unittest.main()

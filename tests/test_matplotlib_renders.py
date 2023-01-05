@@ -1,6 +1,6 @@
 import unittest
 import matplotlib
-matplotlib.use('qtagg')
+matplotlib.use('Qt4Agg')
 import numpy as np
 from pyctcr.yaml_to_model import *
 from pyctcr.visualization.scenes import *
@@ -12,7 +12,7 @@ from pyctcr.robots import ConcentricTubeContinuumRobot
 
 class RobotTestCase(unittest.TestCase):
     def test_something(self):
-        test_scene = Scene(MatplotLib(), None)
+        test_scene = Scene(MatplotLib())
         robot = Robot(load_continous_ctcr_model, "../example_robots/ctr_robot.yaml")
         test_scene.add_robot('ctcr', robot)
         beta = np.linspace(0,0.5,100)

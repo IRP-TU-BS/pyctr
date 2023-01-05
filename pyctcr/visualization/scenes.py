@@ -128,7 +128,7 @@ class Scene:
     The base class for all visualizations in this package
     """
 
-    def __init__(self, engine, path):
+    def __init__(self, engine):
         self.scene_objects = {}
         self.robots = {}
         self.robot_frames = {}

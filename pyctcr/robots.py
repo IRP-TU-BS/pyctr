@@ -1,3 +1,7 @@
+"""
+Robot modules contains all necessary classes and functions to simulate a continous version of a CTCR
+"""
+
 import pdb
 import timeit
 import numpy as np
@@ -15,7 +19,7 @@ import numpy.typing as npt
 
 class ConcentricTubeContinuumRobot:
     """
-
+    The main robot class, which combines mutliple tubes to a single robot with the same configuration space
     """
     def __init__(self, tubes: list, R_init: npt.NDArray = np.identity(3), p_init: npt.NDArray= np.zeros((3, 1))):
         """
@@ -290,11 +294,7 @@ class ConcentricTubeContinuumRobot:
         Apply the current configuration and the inital wrench
         :param wrench:
         :param step_size:
-        :return: [positions as R^3],
-                 [orientations as matrix in SO(3)],
-                 [wrench as spear in R^6],
-                 [curvature in R^3],
-                 [curvatures in R]
+        :return: [positions as R^3],[orientations as matrix in SO(3)],[wrench as spear in R^6],[curvature in R^3],[curvatures in R]
         """
         state, seg_indexes = self.calc_forward(np.asarray(wrench), step_size)
         self.seg_indexes = seg_indexes
@@ -314,16 +314,32 @@ class ConcentricTubeContinuumRobot:
         return self.fwd_static(np.zeros(6), step_size)
 
     def fwd_static_with_boundarys(self, init_wrench: Union[list, npt.ArrayLike], shooting_function: Callable, step_size: float = 0.01):
+        """
+        calculate the forward model with an externally defined shooting method
+        :init_wrench: guess od the initial wrench
+        :shooting_function: a function getting receiving a state, a robot object and the integration step size
+        """
         state = init_wrench
         solution_bvp = least_squares(shooting_function, state, method='lm', loss='linear', ftol=1e-6, args=(self, step_size))
         return self.fwd_static(solution_bvp.x)
 
     def push_end(self, wrench, step_size = 0.01):
-        self.set_boundary_condition(['tip_wrench'], [wrench])
+        """
+        Uses fwd_static_with_boundarys to calculate the shape given an external wrench at the tip
+        """
+        self.set_boundary_condition(['tip_wrench'], [-wrench])
         state = np.zeros(6)
         positions, orientations, _, _, _ = self.fwd_static_with_boundarys(state, shooting_function_force, step_size)
         self.remove_boundary_condition("tip_wrench")
         return positions, orientations
+
+    def fwd_external_gaussian_forces(self, gaussians, step_size=0.001):
+        self._gaussians = gaussians
+        self.tubes[0][1]._gaussians = gaussians
+
+        wrench = np.zeros(6)
+        positions, orientations, wrenches, _, _ = self.fwd_static_with_boundarys(wrench, shooting_function_force, step_size)
+        return positions, orientations, wrenches
 
     def get_tube_outer_radii(self):
         """

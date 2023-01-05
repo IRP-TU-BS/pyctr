@@ -1,9 +1,9 @@
 import numpy as np
 
 def hat(mat):
-    return np.asarray([[0, -mat[2], mat[1]],
-                     [mat[2], 0 , -mat[0]],
-                     [-mat[1], mat[0], 0]], dtype=np.float64)
+    return np.asarray([[0, -mat[2,0], mat[1,0]],
+                     [mat[2,0], 0 , -mat[0,0]],
+                     [-mat[1,0], mat[0,0], 0]], dtype=np.float64)
 
 def invhat(mat):
     return np.asarray([mat[2,1], mat[0,2], mat[1,0]])
@@ -37,6 +37,7 @@ def plot_all_frame(ax, states):
         ax.plot(y[0, :], y[1, :], y[2, :], color='g')
         ax.plot(z[0, :], z[1, :], z[2, :], color='r')
     return ax
+
 
 
 def single_curved_rod():
