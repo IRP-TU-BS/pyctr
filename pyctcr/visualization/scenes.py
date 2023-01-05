@@ -81,8 +81,7 @@ class MatplotLib(Engine):
     def displ_fwd(self,frame, name="robot"):
         pos = frame[0]
         segments = frame[1]
-        radii = frame[2]
-        number_of_tubes = frame[3]
+        number_of_tubes = frame[2]
         cur_tube_num = 1
         tmp_segs = copy(segments)
         tmp_segs.reverse()
@@ -134,9 +133,8 @@ class Scene:
         for rob in self.robots.keys():
             positions, _, _, _, _ = self.robots[rob].calc_fwd()
             segments =  self.robots[rob].get_segments(),
-            radii =  self.robots[rob].get_radi_for_segments(),
             number_of_tubes =  self.robots[rob].num_of_tubes
-            self.robot_frames[rob].append([positions, segments[0], radii, number_of_tubes])
+            self.robot_frames[rob].append([positions, segments[0], number_of_tubes])
 
     def show(self):
         self.engine.show(self.robot_frames)
