@@ -4,7 +4,7 @@ import matplotlib.colors as mcolors
 from matplotlib.animation import FuncAnimation
 
 from vispy import app, scene
-
+from copy import copy
 from functools import partial
 import numpy as np
 import warnings
@@ -70,54 +70,40 @@ class MatplotLib(Engine):
         if not (name in self.plotted_robots):
             robot_seg_dict = {}
             for i in range(number_of_tubes):
-                seg1, = self.ax.plot([0], [0], [0],
+                seg, = self.ax.plot([0], [0], [0],
                                      linewidth=radii[i] * 1e3, label=name, c=self.colors[i])
-                robot_seg_dict[name + 'tube' + str(i+1) + 'seg1'] = seg1
-                seg2, = self.ax.plot([0], [0], [0],
-                                     linewidth=radii[i] * 1e3, label=name, c=self.colors[i])
-                robot_seg_dict[name + 'tube' + str(i+1) + 'seg2'] = seg2
-                segshad1, = self.ax.plot([0], [0], zs=0, zdir='z', c='gray',
+                robot_seg_dict[name + 'tube' + str(i+1)] = seg
+                segshad, = self.ax.plot([0], [0], zs=0, zdir='z', c='gray',
                                          alpha=0.7, linewidth=radii[i] * 1e3)
-                robot_seg_dict[name + 'tube' + str(i+1) + 'segshad1'] = segshad1
-                segshad2, = self.ax.plot([0], [0], zs=0, zdir='z', c='gray',
-                                         alpha=0.7, linewidth=radii[i] * 1e3)
-                robot_seg_dict[name + 'tube' + str(i+1) + 'segshad2'] = segshad2
+                robot_seg_dict[name + 'tube' + str(i+1) + '_shade'] = segshad
             self.plotted_robots[name] = robot_seg_dict
 
-    def displ_fwd(self, pos, segments, radii, number_of_tubes, name="robot"):
-        last_ind = 0
-        seg_data = []
-        for i in range(number_of_tubes,0,-1):
-            seg_dat = []
-            for seg in segments[1:]:
-                if seg[0] == i:
-                    seg_dat.append(pos[last_ind:seg[1],:])
-                    last_ind = seg[1]
-            if len(seg_dat)<2:
-                seg_dat.append(np.zeros((1,3)))
-            seg_data.append(seg_dat)
-
-        #print(seg_data)
-        #print(segments)
-        for i in range(number_of_tubes):
-            for j in range(2):
-                self.plotted_robots[name][name + 'tube' + str(i+1) + 'seg' + str(j+1)].set_data(seg_data[i][j][:,0],
-                                                                                            seg_data[i][j][:, 1],
-                                                                                            )
-                self.plotted_robots[name][name + 'tube' + str(i+1) + 'seg' + str(j+1)].set_3d_properties(seg_data[i][j][:, 2]
-                                                                                            )
-
-
-
+    def displ_fwd(self,frame, name="robot"):
+        pos = frame[0]
+        segments = frame[1]
+        radii = frame[2]
+        number_of_tubes = frame[3]
+        cur_tube_num = 1
+        tmp_segs = copy(segments)
+        tmp_segs.reverse()
+        tmp_segs.pop()
+        while cur_tube_num <= number_of_tubes and len(tmp_segs) != 0:
+            seg = tmp_segs.pop(0)
+            if seg[0] == cur_tube_num:
+                self.plotted_robots[name][name + 'tube' + str(cur_tube_num)].set_data(
+                    pos[:seg[1], 0],
+                    pos[:seg[1], 1],
+                    )
+                self.plotted_robots[name][name + 'tube' + str(cur_tube_num)].set_3d_properties(
+                    pos[:seg[1], 2])
+                cur_tube_num += 1
         self.set_axes_equal(self.ax)
 
-    def show(self, frames, robots):
+    def show(self, frames):
 
         for name in frames.keys():
             ani = FuncAnimation(
-                self.fig, partial(self.displ_fwd, segments=robots[name].get_segments(),
-                                  radii=robots[name].get_radi_for_segments(),
-                                  number_of_tubes=robots[name].num_of_tubes, name=name),
+                self.fig, partial(self.displ_fwd, name=name),
                 frames=frames[name],
                 blit=False)
         plt.show()
@@ -147,10 +133,13 @@ class Scene:
     def update(self):
         for rob in self.robots.keys():
             positions, _, _, _, _ = self.robots[rob].calc_fwd()
-            self.robot_frames[rob].append(positions)
+            segments =  self.robots[rob].get_segments(),
+            radii =  self.robots[rob].get_radi_for_segments(),
+            number_of_tubes =  self.robots[rob].num_of_tubes
+            self.robot_frames[rob].append([positions, segments[0], radii, number_of_tubes])
 
     def show(self):
-        self.engine.show(self.robot_frames, self.robots)
+        self.engine.show(self.robot_frames)
 
 
 class Robot:
