@@ -21,3 +21,4 @@ tqdm==4.62.2
 vispy==0.12.1
 sphinx
 sphinx_gallery
+sphinx-rtd-theme
