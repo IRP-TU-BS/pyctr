@@ -327,19 +327,24 @@ class ConcentricTubeContinuumRobot:
         """
         Uses fwd_static_with_boundarys to calculate the shape given an external wrench at the tip
         """
-        self.set_boundary_condition(['tip_wrench'], [-wrench])
+        self.set_boundary_condition(['tip_wrench'], [-np.asarray(wrench)])
         state = np.zeros(6)
-        positions, orientations, _, _, _ = self.fwd_static_with_boundarys(state, shooting_function_force, step_size)
+        positions, orientations, wrenches, uzs, thetas = self.fwd_static_with_boundarys(state, shooting_function_force, step_size)
         self.remove_boundary_condition("tip_wrench")
-        return positions, orientations
+        return positions, orientations, wrenches, uzs, thetas
 
-    def fwd_external_gaussian_forces(self, gaussians, step_size=0.001):
+    def fwd_external_gaussian_forces(self, step_size=0.001):
+        wrench = np.zeros(6)
+        positions, orientations, wrenches, uzs, thetas = self.fwd_static_with_boundarys(wrench, shooting_function_gaussian_forces, step_size)
+        return positions, orientations, wrenches, uzs, thetas
+
+    def set_gaussians(self, gaussians):
         self._gaussians = gaussians
         self.tubes[0][1]._gaussians = gaussians
 
-        wrench = np.zeros(6)
-        positions, orientations, wrenches, _, _ = self.fwd_static_with_boundarys(wrench, shooting_function_force, step_size)
-        return positions, orientations, wrenches
+    def remove_gaussians(self):
+        self._gaussians = []
+        self.tubes[0][1]._gaussians = []
 
     def get_tube_outer_radii(self):
         """
@@ -368,7 +373,22 @@ def shooting_function_force(guess, ctr, step_size):
 
 
     distal_force_error = tip_wrench[:3] - tip_wrench_shooting[-1,:3]
-    distal_moment_error = invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[-1,3:])) - hat(tip_wrench[3:]).dot(
-        hat(tip_wrench_shooting[-1,3:]).T))
+    distal_moment_error = tip_wrench[3:] - tip_wrench_shooting[-1,3:]
+        #invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[-1,3:])) - hat(tip_wrench[3:]).dot(
+        #hat(tip_wrench_shooting[-1,3:]).T))
     return np.hstack([distal_force_error, distal_moment_error])
 
+
+def shooting_function_gaussian_forces(guess, ctr, step_size):
+    """
+
+    :param guess:
+    :return:
+    """
+    n0 = guess[:3]
+    m0 = guess[3:6]
+    tip_wrench = np.zeros(6)
+    _,_,tip_wrench_shooting,_,_ = ctr.fwd_static(np.hstack([n0, m0]),step_size)
+    distal_force_error = tip_wrench[:3] - tip_wrench_shooting[-1,:3]
+    distal_moment_error = tip_wrench[3:] - tip_wrench_shooting[-1,3:]
+    return np.hstack([distal_force_error, distal_moment_error])
