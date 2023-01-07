@@ -127,8 +127,9 @@ class CosseratRod:
         tip_wrench_shooting = states[-1][12:18]
 
         distal_force_error = tip_wrench[:3] - tip_wrench_shooting[:3]
-        distal_moment_error = invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[3:])) - hat(tip_wrench[3:]).dot(
-            hat(tip_wrench_shooting[3:]).T))
+        distal_moment_error = tip_wrench[3:] - tip_wrench_shooting[3:]
+        #distal_moment_error = invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[3:])) - hat(tip_wrench[3:]).dot(
+        #    hat(tip_wrench_shooting[3:]).T))
         return np.hstack([distal_force_error, distal_moment_error])
 
     def push_end(self, wrench):
@@ -270,31 +271,4 @@ class CurvedCosseratRod(CosseratRod):
 
 
 
-
-
-
-
-# if __name__ == "__main__":
-#     # define base
-#     p0 = np.array([[0, 0, 0]])
-#     R0 = np.eye(3)
-#     L_inner = 178.80  # mm
-#     L_inner_curved = 150  # mm
-#     kappa = 0  # curvature 1/R
-#
-#     inner_rod = CosseratRod()
-#     inner_rod.set_initial_conditions(p0, R0)  # Arbitrary base frame assignment
-#
-#     inner_rod.params['L'] = L_inner * 1e-3  # conversion to m
-#     inner_rod.inital_conditions['kappa_0'] = np.array([0, 0, 0])  # no curvature at base frame
-#     inner_rod.params['kappa'] = kappa
-#     inner_rod.params['alpha'] = 0
-#     inner_rod.params['beta'] = 0.
-#     inner_rod.params['straight_length'] = (L_inner - L_inner_curved) * 1e-3
-#
-#     ctr = CombinedTubes((inner_rod,))
-#     print(ctr.get_ordered_segments())  # show segment ends in current configuration
-#
-#     # test calculation
-#     pos, ori = ctr.push_end([0, -0.5, 0, 0, 0, 0])
 
