@@ -150,9 +150,12 @@ class ConcentricTubeContinuumRobot:
 
             state = np.hstack([p.flatten(), R.reshape((1, 9))[0], w, uzs, thetas])  # guess
 
+            steps =  int(np.ceil((segment_list[i]-segment_list[i - 1])/self.step_len))
+            s = np.linspace(segment_list[i - 1], segment_list[i],steps) # TODO make it optional to set this?
+
             ode_states = integrate.solve_ivp(self.cosserate_rod_ode, (
                 segment_list[i - 1], segment_list[i]), state, dense_output=True,
-                                             max_step=step_len)  # beta is defined 0-1 -> L-L*beta  if beta 0 -> fully elongated tube
+                                             t_eval=s, method='LSODA')  # beta is defined 0-1 -> L-L*beta  if beta 0 -> fully elongated tube
             p = ode_states.y.T[-1:, :3][0]
             R = np.reshape(ode_states.y.T[-1:, 3:12], (3, 3))
             w = ode_states.y.T[-1, 12:18]

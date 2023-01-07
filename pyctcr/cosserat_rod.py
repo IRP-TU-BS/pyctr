@@ -91,6 +91,9 @@ class CosseratRod:
         ms = -np.cross(ps.T[0], n)
         return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
 
+    def external_gauss_forces(self, s):
+        return np.array([[0, 0, 0]]).T # TODO workaround - should be called external forces and should be modular
+
     def shooting_function(self, guess):
         s = np.linspace(0, self.params['L'], 100)
 
