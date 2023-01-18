@@ -324,7 +324,7 @@ class ConcentricTubeContinuumRobot:
         """
         state = init_wrench
         solution_bvp = least_squares(shooting_function, state, method='lm', loss='linear', ftol=1e-6, args=(self, step_size))
-        return self.fwd_static(solution_bvp.x)
+        return self.fwd_static(solution_bvp.x, step_size)
 
     def push_end(self, wrench, step_size = 0.01):
         """
