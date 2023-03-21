@@ -18,8 +18,8 @@ class RobotTestCase(unittest.TestCase):
         beta = np.linspace(0,0.5,100)
         #test_scene.add_arrows(0,0,0,1,1,1, 'red')
         test_scene.show_forces(True)
-        for i,alpha in enumerate(np.linspace(0,np.pi/2,100)):
-            robot.set_config(alphas=[-alpha, alpha], betas=[0,beta[i]])
+        for i,alpha in enumerate(np.linspace(0,np.pi,100)):
+            robot.set_config(alphas=[alpha, 0], betas=[0,beta[i]])
             test_scene.update()
         test_scene.show()
 
