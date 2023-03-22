@@ -333,21 +333,52 @@ class ConcentricTubeContinuumRobot:
         :shooting_function: a function getting receiving a state, a robot object and the integration step size
         """
         state = init_wrench
-        solution_bvp = least_squares(shooting_function, state, method='lm', loss='linear', ftol=1e-6,
-                                     args=(self, step_size))
+        #solution_bvp = least_squares(shooting_function, state, method='lm', loss='linear', ftol=1e-6,
+        #                             args=(self, step_size))
+        solution_bvp = sc.optimize.root(shooting_function, state, method="lm", args=(self, step_size))
         return self.fwd_static(solution_bvp.x, step_size)
 
     def push_end(self, wrench, step_size=0.01):
         """
         Uses fwd_static_with_boundarys to calculate the shape given an external wrench at the tip
         """
-        self.set_boundary_condition(['tip_wrench'], [-np.asarray(wrench)])
+        if np.count_nonzero(wrench) and wrench[2] != 0 and False:  # bad .. TODO
+            # TODO simplification - only uses A of inner rod
+            A = self.tubes[0][1].params['A']
+            L = self.tubes[0][1].params['L']
+            E = self.tubes[0][1].params['E']
+            delta = (-wrench[2]*L)/(E*A)
+            self.set_boundary_condition(['pL', 'RL'], [np.array([0,0,L+delta]), np.identity(3)])
+            shooting_foo = shooting_function_tip_position
+        else:
+            shooting_foo = shooting_function_force
+            self.set_boundary_condition(['tip_wrench'], [-np.asarray(wrench)])
         state = np.zeros(6)
-        positions, orientations, wrenches, uzs, thetas = self.fwd_static_with_boundarys(state, shooting_function_force,
+        positions, orientations, wrenches, uzs, thetas = self.fwd_static_with_boundarys(state, shooting_foo,
                                                                                         step_size)
-        self.remove_boundary_condition("tip_wrench")
+        if np.count_nonzero(wrench) and wrench[2] != 0 and False:
+            self.remove_boundary_condition("pL")
+            self.remove_boundary_condition("RL")
+        else:
+            self.remove_boundary_condition("tip_wrench")
         return positions, orientations, wrenches, uzs, thetas
 
+
+
+    def push_end_to_position(self, pos, step_size=0.01):
+        """
+        Uses fwd_static_with_boundarys to calculate the shape given an external wrench at the tip
+        """
+
+        self.set_boundary_condition(['pL', 'RL'], [pos, np.identity(3)])
+        shooting_foo = shooting_function_tip_pose
+        state = np.zeros(6)
+        positions, orientations, wrenches, uzs, thetas = self.fwd_static_with_boundarys(state, shooting_foo,
+                                                                                        step_size)
+        self.remove_boundary_condition("pL")
+        self.remove_boundary_condition("RL")
+
+        return positions, orientations, wrenches, uzs, thetas
     def fwd_external_gaussian_forces(self, step_size=0.001):
         wrench = np.zeros(6)
         positions, orientations, wrenches, uzs, thetas = self.fwd_static_with_boundarys(wrench,
@@ -410,3 +441,38 @@ def shooting_function_gaussian_forces(guess, ctr, step_size):
     distal_force_error = tip_wrench[:3] - tip_wrench_shooting[-1, :3]
     distal_moment_error = tip_wrench[3:] - tip_wrench_shooting[-1, 3:]
     return np.hstack([distal_force_error, distal_moment_error])
+
+
+def shooting_function_tip_pose(guess, ctr, step_size):
+    """
+
+    :param guess:
+    :return:
+    """
+    n0 = guess[:3]
+    m0 = guess[3:6]
+    pL = ctr.boundary_values['pL']
+    RL = ctr.boundary_values['RL']
+
+    p, R, _, _, _ = ctr.fwd_static(np.hstack([n0, m0]), step_size)
+
+    R = R[-1].reshape((3,3))
+    position_error = p[-1] - pL
+    rotation_error = invhat(R.T @ RL - R @ RL.T)
+    return np.concatenate([position_error, rotation_error])
+
+def shooting_function_tip_position(guess, ctr, step_size):
+    """
+
+    :param guess:
+    :return:
+    """
+    n0 = guess[:3]
+    m0 = guess[3:6]
+    pL = ctr.boundary_values['pL']
+
+
+    p, _, _, _, _ = ctr.fwd_static(np.hstack([n0, m0]), step_size)
+    position_error = p[-1] - pL
+
+    return np.hstack([position_error,np.zeros((3))])
