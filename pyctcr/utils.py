@@ -8,7 +8,11 @@ def hat(mat):
 def invhat(mat):
     return np.asarray([mat[2,1], mat[0,2], mat[1,0]])
 
-
+def Rz(theta):
+    return np.array([[np.cos(theta), -np.sin(theta), 0],
+              [np.sin(theta), np.cos(theta), 0],
+              [0, 0, 1],
+              ])
 
 def plot_frame(ax, R, p):
     ex = R @ np.array([[0.1, 0, 0]]).T

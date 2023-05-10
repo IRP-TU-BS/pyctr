@@ -5,7 +5,7 @@ import numpy as np
 from pyctcr.yaml_to_model import *
 
 
-from pyctcr import cosserat_rod_force_along
+from pyctcr import cosserat_rod_force_along, cosserat_rod
 from pyctcr.robots import ConcentricTubeContinuumRobot
 
 
@@ -38,7 +38,27 @@ def set_axes_equal(ax):
     ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
 
 class RobotTestCase(unittest.TestCase):
-    def test_something(self):
+
+    def test_rod(self):
+        tube_conf = setup_tubes("../example_robots/ctr_robot.yaml")
+        rod_conf = tube_conf[0]
+        rod_conf['s'] = 1 * 1e-3
+        rod_len = 0.5  # rod_conf['L'] * 1e-3
+        rod_conf['L'] = rod_len
+        rod_conf['straight_length'] = rod_len - rod_conf['curved_len'] * 1e-3
+        rod_conf['curved_len'] = rod_conf['curved_len'] * 1e-3
+        rod = cosserat_rod.CosseratRod(rod_conf)
+        p0 = np.array([[0, 0, 0]])
+        R0 = np.eye(3)
+        rod.set_initial_conditions(p0, R0)
+        p1, R, w = rod.push_end(np.array([0.0,0.01,0,0,0,0]), False)
+        print(w[-1])
+        fig = plt.figure()
+        ax = fig.add_subplot(projection='3d')
+        ax.plot(p1[:, 0], p1[:, 1], p1[:, 2])
+        set_axes_equal(ax)
+        plt.show()
+    def test_robot(self):
         tube_conf = setup_tubes("../example_robots/ctr_robot.yaml")
 
         rods = []
@@ -46,7 +66,7 @@ class RobotTestCase(unittest.TestCase):
 
         for rod_conf in tube_conf:
             rod_conf['s'] = 1 * 1e-3
-            rod_len = 0.5 #rod_conf['L'] * 1e-3
+            rod_len = rod_conf['L'] * 1e-3
             rod_conf['L'] = rod_len
             rod_conf['straight_length'] = rod_len - rod_conf['curved_len'] * 1e-3
             rod_conf['curved_len'] = rod_conf['curved_len'] * 1e-3
@@ -60,9 +80,11 @@ class RobotTestCase(unittest.TestCase):
         # test fwd kin
         ctr.fwd_kinematic()
         #ctr.fwd_static([0,0.1,0,0,0,0])
-        #p0, _, _, _, _ = ctr.push_end([0, 0, 0, 0, 0, 0])
-        L = 0.5
-        p1, _, _, _, _ = ctr.push_end_to_position(np.array([0, -0.1*L, 0.8*L]))
+        p1, _, _, us,  uzs, _ = ctr.push_end([-0.3, 0., 0, 0, 0, 0])
+        print(us)
+        print(uzs)
+        #L = 0.005
+        #p1, _, _, _, _ = ctr.push_end_to_position(np.array([0, -0.1*L, 0.8*L]))
         #print(p0)
         print(p1)
         fig = plt.figure()

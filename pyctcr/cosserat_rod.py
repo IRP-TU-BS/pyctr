@@ -78,8 +78,8 @@ class CosseratRod:
 
     def cosserate_rod_ode(self, state, s):
         R = np.reshape(state[3:12], (3, 3))
-        n = state[12:15]
-        m = state[15:]
+        n = state[12:15].reshape(3,-1)
+        m = state[15:].reshape(3,-1)
 
         #v = np.dot(np.linalg.inv(self.params['Kse']).dot(R.T), n) + np.array([[0, 0, 1]])  # Not used here !
         u = np.dot(np.linalg.inv(self.params['Kbt']).dot(R.T), m) #+
@@ -88,8 +88,18 @@ class CosseratRod:
         ps = R.dot(self._e3.T)
         Rs = R.dot(hat(u))
         ns = -self.params['rho'] * self.params['A'] * self.params['g'].T
-        ms = -np.cross(ps.T[0], n)
-        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
+        ms = -np.cross(ps.T, n.T)
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms.flatten()])
+
+    def cosserat_rod_ode_curvature(self, state, s):
+        R = np.reshape(state[3:12], (3, 3))
+        n = state[12:15].reshape(3,-1)
+        u = state[15:].reshape(3,-1)
+        ps = R.dot(self._e3.T)
+        Rs = R.dot(hat(u))
+        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T
+        us = -np.linalg.inv(self.params['Kbt']) @ (hat(u) @ (self.params['Kbt'] @ u) + hat(self._e3.T) @ R.T @ n)
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], us.flatten()])
 
     def external_gauss_forces(self, s):
         return np.array([[0, 0, 0]]).T # TODO workaround - should be called external forces and should be modular
@@ -118,7 +128,7 @@ class CosseratRod:
 
         return np.hstack([distal_pos_error[0], distal_rot_error])
 
-    def shooting_function_force(self, guess):
+    def shooting_function_force(self, guess, curvature_integration):
 
         n0 = guess[:3]
         m0 = guess[3:6]
@@ -126,21 +136,22 @@ class CosseratRod:
 
         steps = int(np.ceil(self.params['L'] / self.params['s']))
 
-        states = self.apply_force(np.hstack([n0, m0]), steps)
-        tip_wrench_shooting = states[-1][12:18]
+        p, R, w = self.apply_force(np.hstack([n0, m0]), steps, curvature_integration)
+        tip_wrench_shooting = w[-1]
 
         distal_force_error = tip_wrench[:3] - tip_wrench_shooting[:3]
         distal_moment_error = tip_wrench[3:] - tip_wrench_shooting[3:]
+        print(distal_force_error)
         #distal_moment_error = invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[3:])) - hat(tip_wrench[3:]).dot(
         #    hat(tip_wrench_shooting[3:]).T))
         return np.hstack([distal_force_error, distal_moment_error])
 
-    def push_end(self, wrench):
+    def push_end(self, wrench, curvature_integration=False):
         self.set_bounding_values(['tip_wrench'], [wrench])
         state = np.zeros((1, 6))
-        solution_bvp = least_squares(self.shooting_function_force, state[0], method='lm', loss='linear', ftol=1e-6)
+        solution_bvp = least_squares(self.shooting_function_force, state[0], method='lm', loss='linear', ftol=1e-6, args=(curvature_integration, ))
         steps = int(np.ceil(self.params['L'] / self.params['s']))
-        states = self.apply_force(solution_bvp.x, steps)
+        states = self.apply_force(solution_bvp.x, steps, curvature_integration)
         return states
 
     def move_end(self, p, R):
@@ -155,19 +166,44 @@ class CosseratRod:
         stop = timeit.default_timer()
         # print('Time: ', stop - start)
 
-        states = self.apply_force(solution_bvp.x)
+        p, R, w = self.apply_force(solution_bvp.x)
 
-        return states
+        return p, R, w
 
-    def apply_force(self, wrench, s_l=20):
+    def calc_m_from_curvature(self, R, u):
+        m = np.zeros((R.shape[0],3))
+        for i in range(R.shape[0]):
+            m[i,:] = (R[i].reshape(3,3)@self.params['Kbt']@u[i].reshape(3,-1)).flatten() # hookes law
+        return m
+
+    def calc_u_from_m(self, R, m, u_star=None):
+        u = np.zeros((R.shape[0],3))
+        for i in range(R.shape[0]):
+            u[i,:] = (np.linalg.inv(self.params['Kbt']) @ R[i].reshape(3,3).T @ m[i].reshape(3,-1)).flatten() # hookes law
+        return u
+
+    def apply_force(self, wrench, s_l=20, curvature_integration = True):
         p0, R0 = self.inital_conditions['p0'], self.inital_conditions['R0']
         s = np.linspace(0, self.params['L'], s_l)
         start = timeit.default_timer()
-        state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench])
-
-        states = integrate.odeint(self.cosserate_rod_ode, state, s)
+        if curvature_integration:
+            u = self.calc_u_from_m(np.asarray([R0]), np.asarray([wrench[3:]]))
+            state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench[0:3], u.flatten()])
+            states = integrate.odeint(self.cosserat_rod_ode_curvature, state, s)
+            p = states[:,:3]
+            R = states[:,3:3+9]
+            n = states[:,3+9:3+9+3]
+            u = states[:,3+9+3:]
+            m = self.calc_m_from_curvature(R, u)
+            wrench = np.hstack([n,m])
+        else:
+            state = np.hstack([p0[0], R0.reshape((1, 9))[0], wrench])
+            states = integrate.odeint(self.cosserate_rod_ode, state, s)
+            p = states[:,:3]
+            R = states[:,3:3+9]
+            wrench = states[:,3+9:]
         stop = timeit.default_timer()
-        return states
+        return p, R, wrench
 
     def is_curved_or_at_end(self, s):
         if s <= self.params['straight_length'] - self.params['straight_length'] * self.params['beta']:
