@@ -90,7 +90,7 @@ class RobotTestCase(unittest.TestCase):
         ctr = ConcentricTubeContinuumRobot(rods)
         # test fwd kin
         ctr.fwd_kinematic()
-        step_size = 0.01
+        step_size = 0.001
         p1, _, _, us,  uzs, _ = ctr.push_end([-0.3, 0., 0, 0, 0, 0], step_size)
         print("us", us)
         print(uzs)
