@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pyctcr.yaml_to_model import *
 
-
+from scipy.spatial.transform import Rotation as R_module
 from pyctcr import cosserat_rod_force_along, cosserat_rod
 from pyctcr.robots import ConcentricTubeContinuumRobot
 
@@ -47,7 +47,7 @@ class RobotTestCase(unittest.TestCase):
         rod_conf['L'] = rod_len
         rod_conf['straight_length'] = rod_len - rod_conf['curved_len'] * 1e-3
         rod_conf['curved_len'] = rod_conf['curved_len'] * 1e-3
-        rod = cosserat_rod.CosseratRod(rod_conf)
+        rod = cosserat_rod.CurvedCosseratRod(rod_conf)
         p0 = np.array([[0, 0, 0]])
         R0 = np.eye(3)
         rod.set_initial_conditions(p0, R0)
@@ -58,6 +58,17 @@ class RobotTestCase(unittest.TestCase):
         ax.plot(p1[:, 0], p1[:, 1], p1[:, 2])
         set_axes_equal(ax)
         plt.show()
+
+    def generate_curve_from_us(self, us, step_size):
+        R = np.identity(3)
+        e3 = np.array([[0,0,1]]).T
+        points = np.array([[0,0,0]])
+        for i,u in enumerate(us):
+            rot_tmp = R_module.from_rotvec(step_size*u)
+            R = R@rot_tmp.as_matrix()
+            tmp_e3 = points[i] + step_size*(R@e3).flatten()
+            points = np.vstack([points,tmp_e3])
+        return points[:-1,:]
     def test_robot(self):
         tube_conf = setup_tubes("../example_robots/ctr_robot.yaml")
 
@@ -79,17 +90,24 @@ class RobotTestCase(unittest.TestCase):
         ctr = ConcentricTubeContinuumRobot(rods)
         # test fwd kin
         ctr.fwd_kinematic()
-        #ctr.fwd_static([0,0.1,0,0,0,0])
-        p1, _, _, us,  uzs, _ = ctr.push_end([-0.3, 0., 0, 0, 0, 0])
-        print(us)
+        step_size = 0.01
+        p1, _, _, us,  uzs, _ = ctr.push_end([-0.3, 0., 0, 0, 0, 0], step_size)
+        print("us", us)
         print(uzs)
+        u_points = self.generate_curve_from_us(us, step_size)
+
+
         #L = 0.005
         #p1, _, _, _, _ = ctr.push_end_to_position(np.array([0, -0.1*L, 0.8*L]))
         #print(p0)
+
+
+
         print(p1)
         fig = plt.figure()
         ax = fig.add_subplot(projection='3d')
         ax.plot(p1[:,0],p1[:,1],p1[:,2])
+        ax.plot(u_points[:,0],u_points[:,1],u_points[:,2])
         set_axes_equal(ax)
         plt.show()
 

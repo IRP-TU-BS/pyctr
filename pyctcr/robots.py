@@ -168,18 +168,16 @@ class ConcentricTubeContinuumRobot:
             w = ode_states.y.T[-1, 12:18]
             uzs = ode_states.y.T[-1, 18:18 + len(self.tubes)]
             thetas = ode_states.y.T[-1, 18 + len(self.tubes):]
-            us.append(self.calc_us(ode_states.y.T[:, 18 + len(self.tubes):], ode_states.y.T[:, 15:18], step_len))
+            us.append(self.calc_us(s, ode_states.y.T[:, 18 + len(self.tubes):], ode_states.y.T[:, 15:18]))
             ode_returns.append(ode_states.y.T)
             current_seg_point += ode_states.y.T[:, :3].shape[0]
             seg_indexes.append((len(self._curr_calc_tubes), current_seg_point))
         return np.vstack(ode_returns), np.vstack(us), seg_indexes
 
-    def calc_us(self, thetas_batch, m_batch, step_len):
-        s = 0
+    def calc_us(self, s, thetas_batch, m_batch):
         u = np.zeros((thetas_batch.shape[0], 3))
-        for i, thetas in enumerate(thetas_batch):
-            u[i, :] = self.calc_uxz(thetas, m_batch[i], s)
-            s += step_len
+        for i, s_cur in enumerate(s):
+            u[i, :] = self.calc_uxz(thetas_batch[i], m_batch[i], s_cur)
         return u
 
     def calc_uxz(self, thetas, m, s):
@@ -484,3 +482,30 @@ def shooting_function_tip_position(guess, ctr, step_size):
     position_error = p[-1] - pL
 
     return np.hstack([position_error, np.zeros((3))])
+
+
+class TendonRobot:
+    def __init__(self, tube, num_of_tendos, R_init: npt.NDArray = np.identity(3), p_init: npt.NDArray = np.zeros((3, 1))):
+        """
+
+        :param tubes: list of tubes in the robot sorted by inner to outer, longest -> shortest
+        :param R_init: orientation of base frame as SO(3) matrix
+        :param p_init: position of base frame in R^3
+        """
+        self.tube = tube
+        self.R_init = R_init  # public variable. Can change during runtime
+        self.p_init = p_init  # public variable. Can change during runtime
+
+        self.boundary_values = None
+
+        # current state of robot
+        self.positions = None
+        self.orientations = None
+        self.wrenches = None
+        self.uzs = None
+        self.thetas = None
+        self.seg_indexes = None
+
+        self.num_of_tendons = num_of_tendos
+
+        

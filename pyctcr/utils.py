@@ -1,9 +1,9 @@
 import numpy as np
 
 def hat(mat):
-    return np.asarray([[0, -mat[2,0], mat[1,0]],
-                     [mat[2,0], 0 , -mat[0,0]],
-                     [-mat[1,0], mat[0,0], 0]], dtype=np.float64)
+    return np.asarray([[0, -mat[2].item(), mat[1].item()],
+                     [mat[2].item(), 0 , -mat[0].item()],
+                     [-mat[1].item(), mat[0].item(), 0]], dtype=np.float64)
 
 def invhat(mat):
     return np.asarray([mat[2,1], mat[0,2], mat[1,0]])

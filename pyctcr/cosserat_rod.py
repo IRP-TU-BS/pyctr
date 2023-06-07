@@ -232,24 +232,6 @@ class CurvedCosseratRod(CosseratRod):
         self._e3 = np.array([[0, 0, 1]])  # define z-axis as coinciding with curve
         self._step_size = None
 
-    # def curvature_ode(self, state, s):
-    #     n = state[0:3]
-    #     m = state[3:6]
-    #     u = state[6:9]
-    #     R = np.reshape(state[9:18], (3, 3))
-    #     step_size = state[18:19]
-    #     u = -np.linalg.inv(self.params['Kbt']) @ (
-    #             (hat(u) @ self.params['Kbt']) @ (u - self.params['kappa']) + R.T @ m)
-    #
-    #     state[6:9] = u
-    #     return state
-
-    # def get_u_div(self, R, n, m, u):
-    #     return -np.linalg.inv(self.params['Kbt']) @ (
-    #             (hat(u) @ self.params['Kbt']) @ (u - self.get_kappa()) - (
-    #                 np.dot(hat(self._e3[0]) @ R.T, self._step_size * np.asarray([n]).T).T[0] + R.T @ m))
-
-
     def cosserate_rod_ode(self, state, s):
         R = np.reshape(state[3:12], (3, 3))
         n = state[12:15]
@@ -263,6 +245,28 @@ class CurvedCosseratRod(CosseratRod):
         ms = -np.cross(ps.T[0], n)  # -l = 0
 
         return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
+
+    def calc_m_from_curvature(self, R, u):
+        m = np.zeros((R.shape[0],3))
+        for i in range(R.shape[0]):
+            m[i,:] = (R[i].reshape(3,3)@self.params['Kbt']@(u[i].reshape(3,-1)-self.get_kappa().reshape(3,-1))).flatten() # hookes law
+        return m
+
+    def calc_u_from_m(self, R, m, u_star=None):
+        u = np.zeros((R.shape[0],3))
+        for i in range(R.shape[0]):
+            u[i,:] = (np.linalg.inv(self.params['Kbt']) @ R[i].reshape(3,3).T @ m[i].reshape(3,-1)).flatten() # hookes law
+        return u
+    def cosserat_rod_ode_curvature(self, state, s):
+        R = np.reshape(state[3:12], (3, 3))
+        n = state[12:15].reshape(3,-1)
+        u = state[15:].reshape(3,-1)
+        ps = R.dot(self._e3.T)
+        Rs = R.dot(hat(u))
+        ns = -self.params['rho'] * self.params['A'] * self.params['g'].T
+        us = -np.linalg.inv(self.params['Kbt']) @ (hat(u) @ (self.params['Kbt'] @ (u-self.get_kappa())) + hat(self._e3.T) @ R.T @ n)
+        return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], us.flatten()])
+
 
     def get_kappa(self):
         return np.array([0, self.cur_kappa, 0])
@@ -279,7 +283,7 @@ class CurvedCosseratRod(CosseratRod):
              return 1
 
 
-    def apply_force(self, wrench, steps=100):
+    def apply_force(self, wrench, steps=100, curvature_integration = False):
         self._step_size = self.params['L'] / steps # ?
         step_size_straight = int(steps * self.params['straight_length'] / self.params['L']) # get how many steps we need to integrate the singel tube
         step_size_curved = int(steps * (self.params['L'] - self.params['straight_length']) / self.params['L']) # get curved steps as we use ODE
@@ -307,7 +311,3 @@ class CurvedCosseratRod(CosseratRod):
         else:
             states = curved_states
         return states
-
-
-
-
