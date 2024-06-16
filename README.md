@@ -64,8 +64,6 @@ from pyctr import plot_robot
 plot_robot(robot)
 ```
 
-### Examples from Notebooks
-
 #### Changing Configuration and Applying External Forces
 This example demonstrates how to change the configuration of the robot and apply external forces.
 
@@ -85,19 +83,6 @@ robot.apply_external_forces(external_forces)
 
 # Verify the changes
 print(robot.current_state)
-```
-
-#### Plotting Robots
-This example illustrates how to plot the robot using the provided visualization tools.
-
-```python
-from pyctr import ConcentricTubeContinuumRobot, plot_robot
-
-# Initialize the robot
-robot = ConcentricTubeContinuumRobot(tube_parameters)
-
-# Plot the robot
-plot_robot(robot)
 ```
 
 ### Future Plans
