@@ -4,8 +4,9 @@
 PyCtr is an implementation of a geometrically exact model for concentric tube continuum robots, inspired by the work of [Rucker et al. and John D. Till](https://github.com/JohnDTill/ContinuumRobotExamples). It aims to provide a functional and understandable model for educational and research purposes.
 
 ### Installation
-To install the package, ensure you have `poetry` installed. Use the `pyproject.toml` file for managing dependencies and installation.
+To install the package, you can use `poetry`, `rye`, or `pip`. Use the `pyproject.toml` file for managing dependencies and installation.
 
+#### Poetry
 1. **Install Poetry (if not already installed):**
    ```bash
    pip install poetry
@@ -15,6 +16,22 @@ To install the package, ensure you have `poetry` installed. Use the `pyproject.t
    Navigate to the project directory and run:
    ```bash
    poetry install
+   ```
+#### Rye
+1. **Install Rye (if not already installed):**
+   ```bash
+   curl -sSf https://rye.astral.sh/get | bash
+   ```
+
+2. **Install the package:**
+   Navigate to the project directory and run:
+   ```bash
+   rye sync
+   ```
+#### Pip
+1. **Install the package**
+   ```bash
+   pip install <path to pyctr>
    ```
 
 ### Using the Models
