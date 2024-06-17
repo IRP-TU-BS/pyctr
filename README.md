@@ -26,6 +26,7 @@ To install the package, you can use `poetry`, `rye`, or `pip`. Use the `pyprojec
 2. **Install the package:**
    Navigate to the project directory and run:
    ```bash
+   rye add pyctr --git git@github.com:hdonat/pyctr.git
    rye sync
    ```
 #### Pip
