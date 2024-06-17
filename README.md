@@ -91,4 +91,4 @@ print(robot.current_state)
 - Make the package available on PyPI
 - Extend to dynamic models
 
-This summary provides a concise overview of the PyCtr package, including installation instructions, basic usage of the models, and visualization techniques. For detailed documentation, refer to the project's documentation generated via `make html` in the `doc` folder.
+For detailed documentation, refer to the project's documentation generated via `make html` in the `doc` folder.
