@@ -1,6 +1,51 @@
-[build-system]
-requires = [
-    "setuptools>=42",
-    "wheel"
+[project]
+name = "pyctr"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Heiko Donat", email = "heiko.donat@gauss-robotics.de" }
 ]
-build-backend = "setuptools.build_meta"
+dependencies = [
+    "ipywidgets>=7.7.1",
+    "Jinja2>=3.1.2",
+    "jupyter-client>=7.3.4",
+    "jupyter-console>=6.4.4",
+    "jupyter-core>=5.1.2",
+    "jupyter-rfb>=0.3.2",
+    "jupyter>=1.0.0",
+    "jupyterlab-pygments>=0.2.2",
+    "jupyterlab-widgets>=1.1.1",
+    "matplotlib-inline>=0.1.6",
+    "matplotlib>=3.4.3",
+    "nbsphinx",
+    "notebook>=6.4.12",
+    "numpy>=1.24.1",
+    "pip>=22.3.1",
+    "PyYAML>=6.0",
+    "QtPy>=2.1.0",
+    "rich>=13.0.0",
+    "scipy>=1.9.0",
+    "tqdm>=4.62.2",
+    "vispy>=0.12.1",
+    "sphinx",
+    "sphinx_gallery",
+    "sphinx-rtd-theme"
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "pytest>=8.3.4",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["pyctr"]

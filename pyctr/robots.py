@@ -2,19 +2,16 @@
 Robot modules contains all necessary classes and functions to simulate a continous version of a CTCR
 """
 
-import pdb
-import timeit
 import numpy as np
 import scipy as sc
 from scipy import integrate
-from scipy.optimize import least_squares
 
 from rich.console import Console
 from rich.table import Table
 
-from .utils import *
+from .utils import Rz, invhat, hat
 
-from typing import Union, List, Callable
+from typing import Union, Callable
 import numpy.typing as npt
 
 
@@ -23,14 +20,21 @@ class ConcentricTubeContinuumRobot:
     The main robot class, which combines mutliple tubes to a single robot with the same configuration space
     """
 
-    def __init__(self, tubes: list, R_init: npt.NDArray = np.identity(3), p_init: npt.NDArray = np.zeros((3, 1))):
+    def __init__(
+        self,
+        tubes: list,
+        R_init: npt.NDArray = np.identity(3),
+        p_init: npt.NDArray = np.zeros((3, 1)),
+    ):
         """
 
         :param tubes: list of tubes in the robot sorted by inner to outer, longest -> shortest
         :param R_init: orientation of base frame as SO(3) matrix
         :param p_init: position of base frame in R^3
         """
-        self.tubes = list(zip(range(len(tubes)), tubes))  # zip with number to have an order
+        self.tubes = list(
+            zip(range(len(tubes)), tubes)
+        )  # zip with number to have an order
         self.R_init = R_init  # public variable. Can change during runtime
         self.p_init = p_init  # public variable. Can change during runtime
         self.alphas = np.zeros(len(tubes))  # rotation variables
@@ -74,15 +78,22 @@ class ConcentricTubeContinuumRobot:
         :param kappa: curvature 1/R
         :return:
         """
-        return np.array([0, kappa, 0])  # we consider that the curvature is defined over y
+        return np.array(
+            [0, kappa, 0]
+        )  # we consider that the curvature is defined over y
 
     def get_ordered_segments(self):
         """
         Caclulates the start and end of each segment (a part of the robot that has a constant curvature)
         :return: list of sorted segment ends (starting 0 as base)
         """
-        ends = [(rod[1].params['straight_length'] - rod[1].params['L'] * (self.betas[i]),
-                 rod[1].params['L'] - rod[1].params['L'] * (self.betas[i])) for i, rod in enumerate(self.tubes)]
+        ends = [
+            (
+                rod[1].params["straight_length"] - rod[1].params["L"] * (self.betas[i]),
+                rod[1].params["L"] - rod[1].params["L"] * (self.betas[i]),
+            )
+            for i, rod in enumerate(self.tubes)
+        ]
         sorted_ends = np.sort([0] + [item for t in ends for item in t])
         sorted_ends = np.unique(sorted_ends)
         # sorted_ends = np.sort([item for t in ends for item in t])
@@ -113,7 +124,10 @@ class ConcentricTubeContinuumRobot:
                 self.tubes[i][1].params["beta"] = betas[i]
                 self.betas[i] = betas[i]
         else:
-            raise Exception('Parameter Error', 'The beta values do not correspond to the specifications!')
+            raise Exception(
+                "Parameter Error",
+                "The beta values do not correspond to the specifications!",
+            )
 
     def calc_forward(self, wrench: Union[list, npt.ArrayLike], step_len: float):
         """
@@ -153,22 +167,38 @@ class ConcentricTubeContinuumRobot:
              n*thetas - difference in rotation
             """
 
-            state = np.hstack([p.flatten(), R.reshape((1, 9))[0], w, uzs, thetas])  # guess
+            state = np.hstack(
+                [p.flatten(), R.reshape((1, 9))[0], w, uzs, thetas]
+            )  # guess
 
-            steps = int(np.ceil((segment_list[i] - segment_list[i - 1]) / self.step_len))
-            s = np.linspace(segment_list[i - 1], segment_list[i], steps)  # TODO make it optional to set this?
+            steps = int(
+                np.ceil((segment_list[i] - segment_list[i - 1]) / self.step_len)
+            )
+            s = np.linspace(
+                segment_list[i - 1], segment_list[i], steps
+            )  # TODO make it optional to set this?
 
-            ode_states = integrate.solve_ivp(self.cosserate_rod_ode, (
-                segment_list[i - 1], segment_list[i]), state, dense_output=True,
-                                             t_eval=s,
-                                             method='LSODA')  # beta is defined 0-1 -> L-L*beta  if beta 0 -> fully elongated tube
+            ode_states = integrate.solve_ivp(
+                self.cosserate_rod_ode,
+                (segment_list[i - 1], segment_list[i]),
+                state,
+                dense_output=True,
+                t_eval=s,
+                method="LSODA",
+            )  # beta is defined 0-1 -> L-L*beta  if beta 0 -> fully elongated tube
 
             p = ode_states.y.T[-1:, :3][0]
             R = np.reshape(ode_states.y.T[-1:, 3:12], (3, 3))
             w = ode_states.y.T[-1, 12:18]
-            uzs = ode_states.y.T[-1, 18:18 + len(self.tubes)]
-            thetas = ode_states.y.T[-1, 18 + len(self.tubes):]
-            us.append(self.calc_us(s, ode_states.y.T[:, 18 + len(self.tubes):], ode_states.y.T[:, 15:18]))
+            uzs = ode_states.y.T[-1, 18 : 18 + len(self.tubes)]
+            thetas = ode_states.y.T[-1, 18 + len(self.tubes) :]
+            us.append(
+                self.calc_us(
+                    s,
+                    ode_states.y.T[:, 18 + len(self.tubes) :],
+                    ode_states.y.T[:, 15:18],
+                )
+            )
             ode_returns.append(ode_states.y.T)
             current_seg_point += ode_states.y.T[:, :3].shape[0]
             seg_indexes.append((len(self._curr_calc_tubes), current_seg_point))
@@ -183,13 +213,13 @@ class ConcentricTubeContinuumRobot:
     def calc_uxz(self, thetas, m, s):
         EIk = 0
         for i in range(len(self._curr_calc_tubes)):
-            EIk += self.tubes[i][1].params['Kbt'][0, 0]
+            EIk += self.tubes[i][1].params["Kbt"][0, 0]
 
         RthetaEkIkuj_star = np.zeros((3, 1))  # PhD Rucker page 91 eq 3.56 last part
 
         for i in range(len(self._curr_calc_tubes)):
             Rtheta = Rz(thetas[i])
-            EIj = self.tubes[i][1].params['Kbt'][0, 0]
+            EIj = self.tubes[i][1].params["Kbt"][0, 0]
 
             curved_part = self.tubes[i][1].is_curved_or_at_end(s)
             tube_curvature = self.tubes[i][1].params["kappa"] * curved_part
@@ -211,10 +241,12 @@ class ConcentricTubeContinuumRobot:
         uzs = []
         thetas = []
         for i in range(len(self._curr_calc_tubes)):
-            uzs.append(state[18 + i:18 + (i + 1)].item())
+            uzs.append(state[18 + i : 18 + (i + 1)].item())
 
         for i in range(len(self._curr_calc_tubes)):
-            thetas.append(state[18 + len(self.tubes) + i:18 + len(self.tubes) + (i + 1)].item())
+            thetas.append(
+                state[18 + len(self.tubes) + i : 18 + len(self.tubes) + (i + 1)].item()
+            )
 
         u1 = self.calc_uxz(thetas, m, s)
 
@@ -238,9 +270,12 @@ class ConcentricTubeContinuumRobot:
             curved_part = self.tubes[i][1].is_curved_or_at_end(s)
             tube_curvature = self.tubes[i][1].params["kappa"] * curved_part
             ui_star = self.get_curvature_vector(tube_curvature)
-            EIi = self.tubes[i][1].params['Kbt'][0, 0]
-            GJi = self.tubes[i][1].params['Kbt'][2, 2]
-            uiz_s.append(ui_star[2] + EIi / GJi * (uixy[i][0] * ui_star[1] - uixy[i][1] * ui_star[0]))  # - 1/GJi)
+            EIi = self.tubes[i][1].params["Kbt"][0, 0]
+            GJi = self.tubes[i][1].params["Kbt"][2, 2]
+            uiz_s.append(
+                ui_star[2]
+                + EIi / GJi * (uixy[i][0] * ui_star[1] - uixy[i][1] * ui_star[0])
+            )  # - 1/GJi)
         uiz_s = [u1[0, 2]] + uiz_s
 
         uzs = np.zeros(len(self.tubes))
@@ -252,23 +287,34 @@ class ConcentricTubeContinuumRobot:
         ns = -R @ external_forces
         msbxy = -hat(u1.T) @ m.T - hat(self.tubes[0][1]._e3.T) @ R.T @ n  # - R.T@l
 
-        return np.hstack([ps.T.flatten(),
-                          Rs.reshape((1, 9)).flatten(),
-                          ns.flatten(),
-                          msbxy.flatten(),
-                          np.hstack(uzs),
-                          np.hstack(thetas)])
+        return np.hstack(
+            [
+                ps.T.flatten(),
+                Rs.reshape((1, 9)).flatten(),
+                ns.flatten(),
+                msbxy.flatten(),
+                np.hstack(uzs),
+                np.hstack(thetas),
+            ]
+        )
 
     # def cosserat_rod_ode_curvature(self, s, state):
 
     def external_gauss_forces(self, s):
-
         fx = np.sum(
-            [self._gaussians[i][0][0] * np.exp(-self._gaussians[i][1] * (s - self._gaussians[i][2]) ** 2) for i in
-             range(len(self._gaussians))])
+            [
+                self._gaussians[i][0][0]
+                * np.exp(-self._gaussians[i][1] * (s - self._gaussians[i][2]) ** 2)
+                for i in range(len(self._gaussians))
+            ]
+        )
         fy = np.sum(
-            [self._gaussians[i][0][1] * np.exp(-self._gaussians[i][1] * (s - self._gaussians[i][2]) ** 2) for i in
-             range(len(self._gaussians))])
+            [
+                self._gaussians[i][0][1]
+                * np.exp(-self._gaussians[i][1] * (s - self._gaussians[i][2]) ** 2)
+                for i in range(len(self._gaussians))
+            ]
+        )
         return np.array([[fx, fy, 0]]).T
 
     def set_boundary_condition(self, names, values):
@@ -304,8 +350,13 @@ class ConcentricTubeContinuumRobot:
         """
         valid = True
         for i in range(1, np.asarray(betas).shape[0]):
-            valid = valid and self.tubes[i][1].params['L'] - betas[i] * self.tubes[i][1].params['L'] <= \
-                    self.tubes[i - 1][1].params['L'] - betas[i - 1] * self.tubes[i - 1][1].params['L']
+            valid = (
+                valid
+                and self.tubes[i][1].params["L"]
+                - betas[i] * self.tubes[i][1].params["L"]
+                <= self.tubes[i - 1][1].params["L"]
+                - betas[i - 1] * self.tubes[i - 1][1].params["L"]
+            )
         return valid
 
     def fwd_static(self, wrench, step_size: float = 0.01):
@@ -319,10 +370,17 @@ class ConcentricTubeContinuumRobot:
         self.seg_indexes = seg_indexes
         self.positions = state[:, :3]
         self.orientations = state[:, 3:12]
-        self.wrenches = state[:, 12:12 + 6]
-        self.uzs = state[:, 18:18 + len(self.tubes)]  # uxy (and also z) of inner tube
-        self.thetas = state[:, 18 + len(self.tubes):]  # all uz of all tubes
-        return self.positions, self.orientations, self.wrenches, us, self.uzs, self.thetas
+        self.wrenches = state[:, 12 : 12 + 6]
+        self.uzs = state[:, 18 : 18 + len(self.tubes)]  # uxy (and also z) of inner tube
+        self.thetas = state[:, 18 + len(self.tubes) :]  # all uz of all tubes
+        return (
+            self.positions,
+            self.orientations,
+            self.wrenches,
+            us,
+            self.uzs,
+            self.thetas,
+        )
 
     def fwd_kinematic(self, step_size: float = 0.01):
         """
@@ -332,8 +390,12 @@ class ConcentricTubeContinuumRobot:
         """
         return self.fwd_static(np.zeros(6), step_size)
 
-    def fwd_static_with_boundarys(self, init_wrench: Union[list, npt.ArrayLike], shooting_function: Callable,
-                                  step_size: float = 0.01):
+    def fwd_static_with_boundarys(
+        self,
+        init_wrench: Union[list, npt.ArrayLike],
+        shooting_function: Callable,
+        step_size: float = 0.01,
+    ):
         """
         calculate the forward model with an externally defined shooting method
         :init_wrench: guess od the initial wrench
@@ -342,7 +404,9 @@ class ConcentricTubeContinuumRobot:
         state = init_wrench
         # solution_bvp = least_squares(shooting_function, state, method='lm', loss='linear', ftol=1e-6,
         #                             args=(self, step_size))
-        solution_bvp = sc.optimize.root(shooting_function, state, method="lm", args=(self, step_size))
+        solution_bvp = sc.optimize.root(
+            shooting_function, state, method="lm", args=(self, step_size)
+        )
         return self.fwd_static(solution_bvp.x, step_size)
 
     def push_end(self, wrench, step_size=0.01):
@@ -351,18 +415,21 @@ class ConcentricTubeContinuumRobot:
         """
         if np.count_nonzero(wrench) and wrench[2] != 0 and False:  # bad .. TODO
             # TODO simplification - only uses A of inner rod
-            A = self.tubes[0][1].params['A']
-            L = self.tubes[0][1].params['L']
-            E = self.tubes[0][1].params['E']
+            A = self.tubes[0][1].params["A"]
+            L = self.tubes[0][1].params["L"]
+            E = self.tubes[0][1].params["E"]
             delta = (-wrench[2] * L) / (E * A)
-            self.set_boundary_condition(['pL', 'RL'], [np.array([0, 0, L + delta]), np.identity(3)])
+            self.set_boundary_condition(
+                ["pL", "RL"], [np.array([0, 0, L + delta]), np.identity(3)]
+            )
             shooting_foo = shooting_function_tip_position
         else:
             shooting_foo = shooting_function_force
-            self.set_boundary_condition(['tip_wrench'], [-np.asarray(wrench)])
+            self.set_boundary_condition(["tip_wrench"], [-np.asarray(wrench)])
         state = np.zeros(6)
-        positions, orientations, wrenches, us, uzs, thetas = self.fwd_static_with_boundarys(state, shooting_foo,
-                                                                                            step_size)
+        positions, orientations, wrenches, us, uzs, thetas = (
+            self.fwd_static_with_boundarys(state, shooting_foo, step_size)
+        )
         if np.count_nonzero(wrench) and wrench[2] != 0 and False:
             self.remove_boundary_condition("pL")
             self.remove_boundary_condition("RL")
@@ -375,11 +442,12 @@ class ConcentricTubeContinuumRobot:
         Uses fwd_static_with_boundarys to calculate the shape given an external wrench at the tip
         """
 
-        self.set_boundary_condition(['pL', 'RL'], [pos, np.identity(3)])
+        self.set_boundary_condition(["pL", "RL"], [pos, np.identity(3)])
         shooting_foo = shooting_function_tip_pose
         state = np.zeros(6)
-        positions, orientations, wrenches, us, uzs, thetas = self.fwd_static_with_boundarys(state, shooting_foo,
-                                                                                            step_size)
+        positions, orientations, wrenches, us, uzs, thetas = (
+            self.fwd_static_with_boundarys(state, shooting_foo, step_size)
+        )
         self.remove_boundary_condition("pL")
         self.remove_boundary_condition("RL")
 
@@ -387,9 +455,11 @@ class ConcentricTubeContinuumRobot:
 
     def fwd_external_gaussian_forces(self, step_size=0.001):
         wrench = np.zeros(6)
-        positions, orientations, wrenches, us, uzs, thetas = self.fwd_static_with_boundarys(wrench,
-                                                                                            shooting_function_gaussian_forces,
-                                                                                            step_size)
+        positions, orientations, wrenches, us, uzs, thetas = (
+            self.fwd_static_with_boundarys(
+                wrench, shooting_function_gaussian_forces, step_size
+            )
+        )
         return positions, orientations, wrenches, us, uzs, thetas
 
     def set_gaussians(self, gaussians):
@@ -407,7 +477,7 @@ class ConcentricTubeContinuumRobot:
         """
         outer_radii = []
         for t in self.tubes:
-            outer_radii.append(t[1].params['r_outer'])
+            outer_radii.append(t[1].params["r_outer"])
         return outer_radii
 
 
@@ -424,7 +494,7 @@ def shooting_function_force(guess, ctr, step_size):
     """
     n0 = guess[:3]
     m0 = guess[3:6]
-    tip_wrench = ctr.boundary_values['tip_wrench']
+    tip_wrench = ctr.boundary_values["tip_wrench"]
     _, _, tip_wrench_shooting, _, _, _ = ctr.fwd_static(np.hstack([n0, m0]), step_size)
 
     distal_force_error = tip_wrench[:3] - tip_wrench_shooting[-1, :3]
@@ -457,8 +527,8 @@ def shooting_function_tip_pose(guess, ctr, step_size):
     """
     n0 = guess[:3]
     m0 = guess[3:6]
-    pL = ctr.boundary_values['pL']
-    RL = ctr.boundary_values['RL']
+    pL = ctr.boundary_values["pL"]
+    RL = ctr.boundary_values["RL"]
 
     p, R, _, _, _, _ = ctr.fwd_static(np.hstack([n0, m0]), step_size)
 
@@ -476,7 +546,7 @@ def shooting_function_tip_position(guess, ctr, step_size):
     """
     n0 = guess[:3]
     m0 = guess[3:6]
-    pL = ctr.boundary_values['pL']
+    pL = ctr.boundary_values["pL"]
 
     p, _, _, _, _, _ = ctr.fwd_static(np.hstack([n0, m0]), step_size)
     position_error = p[-1] - pL
@@ -485,7 +555,13 @@ def shooting_function_tip_position(guess, ctr, step_size):
 
 
 class TendonRobot:
-    def __init__(self, tube, num_of_tendos, R_init: npt.NDArray = np.identity(3), p_init: npt.NDArray = np.zeros((3, 1))):
+    def __init__(
+        self,
+        tube,
+        num_of_tendos,
+        R_init: npt.NDArray = np.identity(3),
+        p_init: npt.NDArray = np.zeros((3, 1)),
+    ):
         """
 
         :param tubes: list of tubes in the robot sorted by inner to outer, longest -> shortest
@@ -507,5 +583,3 @@ class TendonRobot:
         self.seg_indexes = None
 
         self.num_of_tendons = num_of_tendos
-
-        
