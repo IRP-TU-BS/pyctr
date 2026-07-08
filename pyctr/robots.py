@@ -100,6 +100,24 @@ class ConcentricTubeContinuumRobot:
         sorted_ends = sorted_ends[sorted_ends >= 0]
         return list(sorted_ends)
 
+    def tube_tip_indices(self):
+        """
+        Row index (into the stacked forward-integration state) of each tube's own distal
+        tip. Tubes are ordered innermost (longest) first, so tube i is present in every
+        segment whose tube-count is >= i + 1. ``seg_indexes`` entries are
+        ``(tubes_in_segment, cumulative_row_count)``.
+        :return: list of tip row indices, one per tube
+        """
+        tips = []
+        for i in range(len(self.tubes)):
+            idx = None
+            for seg in self.seg_indexes[1:]:
+                count, end = seg
+                if count >= i + 1:
+                    idx = end - 1
+            tips.append(idx)
+        return tips
+
     def rotate(self, alphas: Union[list, npt.ArrayLike]):
         """
         Change alphas to new rotation.
@@ -129,14 +147,25 @@ class ConcentricTubeContinuumRobot:
                 "The beta values do not correspond to the specifications!",
             )
 
-    def calc_forward(self, wrench: Union[list, npt.ArrayLike], step_len: float):
+    def calc_forward(
+        self,
+        wrench: Union[list, npt.ArrayLike],
+        step_len: float,
+        uzs0: Union[list, npt.ArrayLike, None] = None,
+    ):
         """
         ode integration for each element to reduce jumps at the segment boarders
         :param wrench: inital wrench at init frame
         :param step_len: integration step len
+        :param uzs0: initial torsional curvature u_iz(0) for each tube (defaults to 0).
+            These are the shooting unknowns of the torsional boundary value problem.
         :return:
         """
-        R = self.R_init
+        # Tube 1 (innermost, longest) defines the reference frame. Its base rotation
+        # alpha_1 rotates the whole robot, and all relative angles are measured from it
+        # (theta_1 == 0, theta_i(0) = alpha_i - alpha_1). See Rucker 2010 eq. (3)-(4).
+        alpha_1 = self.alphas[0]
+        R = self.R_init @ Rz(alpha_1)
         p = self.p_init
         self.step_len = step_len
         w = wrench
@@ -145,8 +174,11 @@ class ConcentricTubeContinuumRobot:
         ode_returns = []
         thetas = []
         for i in range(len(self.tubes)):
-            thetas.append(self.alphas[self.tubes[i][0]])
-        uzs = np.zeros(len(self.tubes))
+            thetas.append(self.alphas[self.tubes[i][0]] - alpha_1)
+        if uzs0 is None:
+            uzs = np.zeros(len(self.tubes))
+        else:
+            uzs = np.asarray(uzs0, dtype=float).copy()
         us = []
         seg_indexes = []
         current_seg_point = 0
@@ -197,6 +229,7 @@ class ConcentricTubeContinuumRobot:
                     s,
                     ode_states.y.T[:, 18 + len(self.tubes) :],
                     ode_states.y.T[:, 15:18],
+                    ode_states.y.T[:, 18 : 18 + len(self.tubes)],
                 )
             )
             ode_returns.append(ode_states.y.T)
@@ -204,29 +237,42 @@ class ConcentricTubeContinuumRobot:
             seg_indexes.append((len(self._curr_calc_tubes), current_seg_point))
         return np.vstack(ode_returns), np.vstack(us), seg_indexes
 
-    def calc_us(self, s, thetas_batch, m_batch):
+    def calc_us(self, s, thetas_batch, m_batch, uz_batch):
         u = np.zeros((thetas_batch.shape[0], 3))
         for i, s_cur in enumerate(s):
-            u[i, :] = self.calc_uxz(thetas_batch[i], m_batch[i], s_cur)
+            u[i, :] = self.calc_uxz(thetas_batch[i], m_batch[i], s_cur, uz_batch[i, 0])
         return u
 
-    def calc_uxz(self, thetas, m, s):
+    def calc_uxz(self, thetas, m, s, u1z):
+        """
+        Reconstruct tube-1 curvature u_1 from the body-frame moment m.
+
+        The bending components (x, y) are the stiffness-weighted average of the rotated
+        pre-curvatures plus the applied moment (Rucker 2010 eq. (17) algebraic form):
+            u_1|xy = (sum_j E_j I_j)^-1 * ( m|xy + sum_j E_j I_j (R_z(theta_j) u*_j)|xy )
+        The torsional component (z) is NOT given by this bending-stiffness average; it is
+        an independently integrated state and is passed in as ``u1z``.
+        """
         EIk = 0
         for i in range(len(self._curr_calc_tubes)):
-            EIk += self.tubes[i][1].params["Kbt"][0, 0]
+            EIk += self._curr_calc_tubes[i][1].params["Kbt"][0, 0]
 
         RthetaEkIkuj_star = np.zeros((3, 1))  # PhD Rucker page 91 eq 3.56 last part
 
         for i in range(len(self._curr_calc_tubes)):
+            tube = self._curr_calc_tubes[i][1]
             Rtheta = Rz(thetas[i])
-            EIj = self.tubes[i][1].params["Kbt"][0, 0]
+            EIj = tube.params["Kbt"][0, 0]
 
-            curved_part = self.tubes[i][1].is_curved_or_at_end(s)
-            tube_curvature = self.tubes[i][1].params["kappa"] * curved_part
+            # curved section -> 1, straight section or past the tube end -> 0
+            curved_part = max(tube.is_curved_or_at_end(s), 0)
+            tube_curvature = tube.params["kappa"] * curved_part
             uj_star = self.get_curvature_vector(tube_curvature)
             RthetaEkIkuj_star += EIj * Rtheta @ uj_star.reshape(-1, 1)
 
-        return 1 / EIk * (m + RthetaEkIkuj_star.T)
+        u1 = 1 / EIk * (m + RthetaEkIkuj_star.T)
+        u1[0, 2] = u1z  # torsion comes from the integrated state, not the bending average
+        return u1
 
     def cosserate_rod_ode(self, s, state):
         """
@@ -248,13 +294,14 @@ class ConcentricTubeContinuumRobot:
                 state[18 + len(self.tubes) + i : 18 + len(self.tubes) + (i + 1)].item()
             )
 
-        u1 = self.calc_uxz(thetas, m, s)
+        u1 = self.calc_uxz(thetas, m, s, uzs[0])
 
+        # Curvature of each tube in its own frame: u_i = R_z(theta_i)^T u_1
+        # (Rucker 2010 eq. (4) -- note the transpose). Only x, y are needed below.
         uixy = []
-        for i in range(1, len(self._curr_calc_tubes)):
+        for i in range(len(self._curr_calc_tubes)):
             Rtheta = Rz(thetas[i])
-            uixy.append((Rtheta @ u1.T).T[0, :2])
-        uixy = [u1[0, :2]] + uixy
+            uixy.append((Rtheta.T @ u1.T).T[0, :2])
 
         external_forces = self.tubes[0][1].external_gauss_forces(s)
 
@@ -265,18 +312,21 @@ class ConcentricTubeContinuumRobot:
         for i in range(len(self._curr_calc_tubes)):
             thetas_s.append(uzs[i] - uzs[0])
 
+        # Torsional curvature ODE, applied to every tube incl. tube 1 (Rucker 2010
+        # eq. (22), no distributed moment, constant GJ):
+        #   u_iz' = du*_iz/ds + (E_i I_i / G_i J_i) (u_ix u*_iy - u_iy u*_ix)
+        # du*_iz/ds = 0 for the constant precurvature u* = [0, kappa, 0] used here.
         uiz_s = []
-        for i in range(1, len(self._curr_calc_tubes)):
-            curved_part = self.tubes[i][1].is_curved_or_at_end(s)
-            tube_curvature = self.tubes[i][1].params["kappa"] * curved_part
+        for i in range(len(self._curr_calc_tubes)):
+            tube = self._curr_calc_tubes[i][1]
+            curved_part = max(tube.is_curved_or_at_end(s), 0)
+            tube_curvature = tube.params["kappa"] * curved_part
             ui_star = self.get_curvature_vector(tube_curvature)
-            EIi = self.tubes[i][1].params["Kbt"][0, 0]
-            GJi = self.tubes[i][1].params["Kbt"][2, 2]
+            EIi = tube.params["Kbt"][0, 0]
+            GJi = tube.params["Kbt"][2, 2]
             uiz_s.append(
-                ui_star[2]
-                + EIi / GJi * (uixy[i][0] * ui_star[1] - uixy[i][1] * ui_star[0])
-            )  # - 1/GJi)
-        uiz_s = [u1[0, 2]] + uiz_s
+                EIi / GJi * (uixy[i][0] * ui_star[1] - uixy[i][1] * ui_star[0])
+            )
 
         uzs = np.zeros(len(self.tubes))
         thetas = np.zeros(len(self.tubes))
@@ -284,7 +334,8 @@ class ConcentricTubeContinuumRobot:
             uzs[i] = uiz_s[i]
             thetas[i] = thetas_s[i]
 
-        ns = -R @ external_forces
+        # dn/ds = -f with the distributed force f expressed in the world frame.
+        ns = -external_forces
         msbxy = -hat(u1.T) @ m.T - hat(self.tubes[0][1]._e3.T) @ R.T @ n  # - R.T@l
 
         return np.hstack(
@@ -359,20 +410,23 @@ class ConcentricTubeContinuumRobot:
             )
         return valid
 
-    def fwd_static(self, wrench, step_size: float = 0.01):
+    def fwd_static(self, wrench, step_size: float = 0.01, uzs0=None):
         """
         Apply the current configuration and the inital wrench
         :param wrench:
         :param step_size:
+        :param uzs0: initial torsional curvatures u_iz(0) per tube (defaults to 0).
         :return: [positions as R^3],[orientations as matrix in SO(3)],[wrench as spear in R^6],[curvature in R^3],[curvatures in R]
         """
-        state, us, seg_indexes = self.calc_forward(np.asarray(wrench), step_size)
+        state, us, seg_indexes = self.calc_forward(
+            np.asarray(wrench), step_size, uzs0=uzs0
+        )
         self.seg_indexes = seg_indexes
         self.positions = state[:, :3]
         self.orientations = state[:, 3:12]
         self.wrenches = state[:, 12 : 12 + 6]
-        self.uzs = state[:, 18 : 18 + len(self.tubes)]  # uxy (and also z) of inner tube
-        self.thetas = state[:, 18 + len(self.tubes) :]  # all uz of all tubes
+        self.uzs = state[:, 18 : 18 + len(self.tubes)]  # torsional curvature of each tube
+        self.thetas = state[:, 18 + len(self.tubes) :]  # relative rotation angle of each tube
         return (
             self.positions,
             self.orientations,
@@ -402,39 +456,34 @@ class ConcentricTubeContinuumRobot:
         :shooting_function: a function getting receiving a state, a robot object and the integration step size
         """
         state = init_wrench
-        # solution_bvp = least_squares(shooting_function, state, method='lm', loss='linear', ftol=1e-6,
-        #                             args=(self, step_size))
+        # "hybr" (MINPACK hybrd) chooses its own finite-difference step; the default "lm"
+        # step underflows here because the state/curvature unknowns are ~1e-3, which
+        # leaves the torsional residuals unconverged.
         solution_bvp = sc.optimize.root(
-            shooting_function, state, method="lm", args=(self, step_size)
+            shooting_function, state, method="hybr", args=(self, step_size)
         )
-        return self.fwd_static(solution_bvp.x, step_size)
+        # A guess of length 6 is a pure wrench; a longer guess also carries the initial
+        # torsional curvatures u_iz(0) that the torsional BVP solves for.
+        x = solution_bvp.x
+        wrench = x[:6]
+        uzs0 = x[6:] if len(x) > 6 else None
+        return self.fwd_static(wrench, step_size, uzs0=uzs0)
 
     def push_end(self, wrench, step_size=0.01):
         """
-        Uses fwd_static_with_boundarys to calculate the shape given an external wrench at the tip
+        Uses fwd_static_with_boundarys to calculate the shape given an external wrench
+        applied at the tip. The distal boundary conditions solved for are
+        n(L) = F_tip, sum_i m_i(L) = M_tip (both in the world frame), and the free
+        torsional end of every tube u_iz(L_i) = 0 (Rucker 2010, Sec. II-C).
         """
-        if np.count_nonzero(wrench) and wrench[2] != 0 and False:  # bad .. TODO
-            # TODO simplification - only uses A of inner rod
-            A = self.tubes[0][1].params["A"]
-            L = self.tubes[0][1].params["L"]
-            E = self.tubes[0][1].params["E"]
-            delta = (-wrench[2] * L) / (E * A)
-            self.set_boundary_condition(
-                ["pL", "RL"], [np.array([0, 0, L + delta]), np.identity(3)]
-            )
-            shooting_foo = shooting_function_tip_position
-        else:
-            shooting_foo = shooting_function_force
-            self.set_boundary_condition(["tip_wrench"], [-np.asarray(wrench)])
-        state = np.zeros(6)
+        self.set_boundary_condition(["tip_wrench"], [np.asarray(wrench)])
+        # unknowns: initial force n0 (3), initial body-frame moment m0 (3),
+        # and initial torsional curvature u_iz(0) for each tube.
+        state = np.zeros(6 + len(self.tubes))
         positions, orientations, wrenches, us, uzs, thetas = (
-            self.fwd_static_with_boundarys(state, shooting_foo, step_size)
+            self.fwd_static_with_boundarys(state, shooting_function_force, step_size)
         )
-        if np.count_nonzero(wrench) and wrench[2] != 0 and False:
-            self.remove_boundary_condition("pL")
-            self.remove_boundary_condition("RL")
-        else:
-            self.remove_boundary_condition("tip_wrench")
+        self.remove_boundary_condition("tip_wrench")
         return positions, orientations, wrenches, us, uzs, thetas
 
     def push_end_to_position(self, pos, step_size=0.01):
@@ -488,20 +537,35 @@ Shooting Methods
 
 def shooting_function_force(guess, ctr, step_size):
     """
+    Residual for the tip-wrench boundary value problem.
 
-    :param guess:
-    :return:
+    Unknowns ``guess``: [n0 (3), m0 (3), u_iz(0) for each tube].
+    Residuals: world-frame tip force error, world-frame tip moment error, and the free
+    torsional end condition u_iz(L_i) = 0 for every tube.
     """
     n0 = guess[:3]
     m0 = guess[3:6]
+    uzs0 = guess[6:]
     tip_wrench = ctr.boundary_values["tip_wrench"]
-    _, _, tip_wrench_shooting, _, _, _ = ctr.fwd_static(np.hstack([n0, m0]), step_size)
+    _, orientations, wrenches, _, uzs, _ = ctr.fwd_static(
+        np.hstack([n0, m0]), step_size, uzs0=uzs0
+    )
 
-    distal_force_error = tip_wrench[:3] - tip_wrench_shooting[-1, :3]
-    distal_moment_error = tip_wrench[3:] - tip_wrench_shooting[-1, 3:]
-    # invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[-1,3:])) - hat(tip_wrench[3:]).dot(
-    # hat(tip_wrench_shooting[-1,3:]).T))
-    return np.hstack([distal_force_error, distal_moment_error])
+    # Internal force n is integrated in the world frame; the internal moment m is in
+    # tube 1's body frame, so rotate it to the world frame before comparing.
+    n_tip = wrenches[-1, :3]
+    m_body_tip = wrenches[-1, 3:]
+    R_tip = orientations[-1].reshape((3, 3))
+    m_world_tip = R_tip @ m_body_tip
+
+    distal_force_error = tip_wrench[:3] - n_tip
+    distal_moment_error = tip_wrench[3:] - m_world_tip
+
+    tips = ctr.tube_tip_indices()
+    torsion_error = np.array(
+        [uzs[tips[i], i] for i in range(len(ctr.tubes))]
+    )  # u_iz(L_i) = 0 at each tube's own tip
+    return np.hstack([distal_force_error, distal_moment_error, torsion_error])
 
 
 def shooting_function_gaussian_forces(guess, ctr, step_size):
@@ -512,11 +576,20 @@ def shooting_function_gaussian_forces(guess, ctr, step_size):
     """
     n0 = guess[:3]
     m0 = guess[3:6]
+    uzs0 = guess[6:] if len(guess) > 6 else None
     tip_wrench = np.zeros(6)
-    _, _, tip_wrench_shooting, _, _ = ctr.fwd_static(np.hstack([n0, m0]), step_size)
-    distal_force_error = tip_wrench[:3] - tip_wrench_shooting[-1, :3]
-    distal_moment_error = tip_wrench[3:] - tip_wrench_shooting[-1, 3:]
-    return np.hstack([distal_force_error, distal_moment_error])
+    _, orientations, wrenches, _, uzs, _ = ctr.fwd_static(
+        np.hstack([n0, m0]), step_size, uzs0=uzs0
+    )
+    n_tip = wrenches[-1, :3]
+    m_world_tip = orientations[-1].reshape((3, 3)) @ wrenches[-1, 3:]
+    distal_force_error = tip_wrench[:3] - n_tip
+    distal_moment_error = tip_wrench[3:] - m_world_tip
+    if uzs0 is None:
+        return np.hstack([distal_force_error, distal_moment_error])
+    tips = ctr.tube_tip_indices()
+    torsion_error = np.array([uzs[tips[i], i] for i in range(len(ctr.tubes))])
+    return np.hstack([distal_force_error, distal_moment_error, torsion_error])
 
 
 def shooting_function_tip_pose(guess, ctr, step_size):
@@ -534,7 +607,9 @@ def shooting_function_tip_pose(guess, ctr, step_size):
 
     R = R[-1].reshape((3, 3))
     position_error = p[-1] - pL
-    rotation_error = invhat(R.T @ RL - R @ RL.T)
+    # invhat requires a skew-symmetric argument; A - A.T is the antisymmetric part.
+    A = R.T @ RL
+    rotation_error = invhat(A - A.T)
     return np.concatenate([position_error, rotation_error])
 
 

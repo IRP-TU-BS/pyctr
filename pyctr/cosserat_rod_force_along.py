@@ -104,11 +104,12 @@ class ExtForceRod(object):
         n0 = guess[:3]
         m0 = guess[3:6]
         tip_wrench = np.zeros(6)
-        states = self.apply_force(np.hstack([n0, m0]), s_l)
-        tip_wrench_shooting = states[-1, 12:18]
-        # diff_sums = (np.linalg.norm(states[:,12:18]) - np.sqrt(np.pi/(self._gaussians[0][1]+0.000000001))*np.linalg.norm(np.asarray(self._gaussians[0][0])))**2
+        p, R, w = self.apply_force(np.hstack([n0, m0]), s_l)
+        tip_wrench_shooting = w[-1]
 
-        return np.hstack([(tip_wrench - tip_wrench_shooting) ** 2])
+        # Return the plain residual: least_squares squares it internally, so squaring
+        # here would discard sign information and break the solver.
+        return tip_wrench - tip_wrench_shooting
 
 
 class StraightCosseratRod(ExtForceRod, CosseratRod):
@@ -134,8 +135,8 @@ class StraightCosseratRod(ExtForceRod, CosseratRod):
             if self._force_model == Force_Model.GAUSSIAN
             else self.external_fourier_forces(s)
         )
-        # ns = -self.params['rho'] * self.params['A'] * self.params['g'].T + external_forces
-        ns = -R @ external_forces
+        # dn/ds = -f with the distributed force f expressed in the world frame.
+        ns = -external_forces
         ms = -np.cross(ps.T[0], n)
 
         return np.hstack([ps.T[0], np.reshape(Rs, (1, 9))[0], ns.T[0], ms])
@@ -185,9 +186,10 @@ class CurvedCosseratRodExt(ExtForceRod, CurvedCosseratRod):
         # ode
         ps = R.dot(self._e3.T)
         Rs = R.dot(hat(u))
+        # dn/ds = -f, with gravity and the distributed force both in the world frame.
         ns = (
             -self.params["rho"] * self.params["A"] * self.params["g"].T
-            - R @ external_forces
+            - external_forces
         )
         ms = -np.cross(ps.T[0], n)  # -l = 0
 

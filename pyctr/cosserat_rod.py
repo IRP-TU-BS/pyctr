@@ -65,10 +65,12 @@ class CosseratRod:
         self.bounding_values = None
 
     def _make_garvitational_vec(self, g, dir):
+        # Gravity points in the negative direction of the chosen axis (down = -z),
+        # so that the body force f = rho*A*g_vec and dn/ds = -f give a downward weight.
         switch = {
-            "x": np.array([[g, 0, 0]]),
-            "y": np.array([[0, g, 0]]),
-            "z": np.array([[0, 0, g]]),
+            "x": np.array([[-g, 0, 0]]),
+            "y": np.array([[0, -g, 0]]),
+            "z": np.array([[0, 0, -g]]),
         }
         return switch.get(dir, "Invalid input")
 
@@ -123,18 +125,15 @@ class CosseratRod:
 
         n0 = guess[:3]
         m0 = guess[3:6]
-        if self.params["kappa_0"] is None:
-            u = np.zeros(3)
-        else:
-            u = self.params["kappa_0"]
 
+        # cosserate_rod_ode integrates an 18-element state [p, R, n, m]; the initial
+        # curvature is encoded through m0 and must not be appended as extra state.
         y0 = np.hstack(
             [
                 self.inital_conditions["p0"][0],
                 np.reshape(self.inital_conditions["R0"], (1, 9))[0],
                 n0,
                 m0,
-                u,
             ]
         )
         pL = self.bounding_values["pL"]
@@ -145,7 +144,9 @@ class CosseratRod:
         RL_shooting = np.reshape(states[-1][3:12], (3, 3))
 
         distal_pos_error = pL - pL_shooting
-        distal_rot_error = invhat(RL.T.dot(RL_shooting) - RL.dot(RL_shooting.T))
+        # invhat requires a skew-symmetric argument; A - A.T is the antisymmetric part.
+        A = RL.T.dot(RL_shooting)
+        distal_rot_error = invhat(A - A.T)
 
         return np.hstack([distal_pos_error[0], distal_rot_error])
 
@@ -161,7 +162,6 @@ class CosseratRod:
 
         distal_force_error = tip_wrench[:3] - tip_wrench_shooting[:3]
         distal_moment_error = tip_wrench[3:] - tip_wrench_shooting[3:]
-        print(distal_force_error)
         # distal_moment_error = invhat(hat(tip_wrench[3:]).T.dot(hat(tip_wrench_shooting[3:])) - hat(tip_wrench[3:]).dot(
         #    hat(tip_wrench_shooting[3:]).T))
         return np.hstack([distal_force_error, distal_moment_error])
@@ -182,7 +182,7 @@ class CosseratRod:
         return states
 
     def move_end(self, p, R):
-        self.set_bounding_values(p, R)
+        self.set_bounding_values(["pL", "RL"], [p, R])
         _, _ = self.inital_conditions["p0"], self.inital_conditions["R0"]
         state = np.zeros((1, 6))
 
@@ -236,7 +236,7 @@ class CosseratRod:
         if (
             s
             <= self.params["straight_length"]
-            - self.params["straight_length"] * self.params["beta"]
+            - self.params["L"] * self.params["beta"]
         ):
             return 0
         elif s > self.params["L"] - self.params["L"] * self.params["beta"]:
@@ -258,7 +258,13 @@ class CurvedCosseratRod(CosseratRod):
         super().__init__(params)
 
         if params is None:
-            self.params["kappa"] = np.array([0, 0.16, 0])
+            self.params["kappa"] = 0.16
+
+        # kappa is stored as a scalar magnitude; the precurvature vector is [0, kappa, 0]
+        # (curvature about the local y axis). Accept a vector input and reduce it.
+        kappa = self.params["kappa"]
+        if np.ndim(kappa) > 0:
+            self.params["kappa"] = float(np.asarray(kappa).flatten()[1])
 
         self._e3 = np.array([[0, 0, 1]])  # define z-axis as coinciding with curve
         self._step_size = None
@@ -322,7 +328,7 @@ class CurvedCosseratRod(CosseratRod):
         if (
             s
             <= self.params["straight_length"]
-            - self.params["straight_length"] * self.params["beta"]
+            - self.params["L"] * self.params["beta"]
         ):
             return 0
         elif s > self.params["L"] - self.params["L"] * self.params["beta"]:
@@ -331,15 +337,21 @@ class CurvedCosseratRod(CosseratRod):
             return 1
 
     def apply_force(self, wrench, steps=100, curvature_integration=False):
-        self._step_size = self.params["L"] / steps  # ?
-        step_size_straight = int(
-            steps * self.params["straight_length"] / self.params["L"]
-        )  # get how many steps we need to integrate the singel tube
-        step_size_curved = int(
-            steps
-            * (self.params["L"] - self.params["straight_length"])
-            / self.params["L"]
-        )  # get curved steps as we use ODE
+        if curvature_integration:
+            raise NotImplementedError(
+                "curvature integration is not implemented for CurvedCosseratRod; "
+                "use the moment-based integration (curvature_integration=False)."
+            )
+        # Retracting the tube by beta shortens the exposed length and shifts the
+        # straight/curved boundary by the same amount (L * beta), consistent with
+        # is_curved_or_at_end and get_ordered_segments.
+        L = self.params["L"]
+        beta = self.params["beta"]
+        L_eff = L - L * beta
+        straight_eff = max(self.params["straight_length"] - L * beta, 0.0)
+        self._step_size = L_eff / steps
+        step_size_straight = int(steps * straight_eff / L_eff) if L_eff > 0 else 0
+        step_size_curved = steps - step_size_straight
         # straight part
         p0, R0 = (
             self.inital_conditions["p0"],
@@ -347,7 +359,7 @@ class CurvedCosseratRod(CosseratRod):
         )  # get start from initial condition
         curved_kappa = self.params["kappa"]
         states = None
-        start_integration_length = 0
+        start_integration_length = 0.0
         if step_size_straight > 0:
             self.set_kappa(
                 0
@@ -355,7 +367,7 @@ class CurvedCosseratRod(CosseratRod):
             state = np.hstack(
                 [p0.flatten(), R0.reshape((1, 9)).flatten(), wrench]
             )  # initial state
-            s = np.linspace(0, self.params["straight_length"], step_size_straight)
+            s = np.linspace(0, straight_eff, step_size_straight)
             straight_states = integrate.odeint(
                 self.cosserate_rod_ode, state, s
             )  # integrate over s steps
@@ -363,15 +375,16 @@ class CurvedCosseratRod(CosseratRod):
             R0 = straight_states[-1][3:12]
             wrench = straight_states[-1][12:18]
             states = straight_states
-            start_integration_length = self.params["straight_length"]
+            start_integration_length = straight_eff
         self.set_kappa(curved_kappa)  # set kappa to curved parts curvature
         state = np.hstack(
             [p0.flatten(), R0.reshape((1, 9)).flatten(), wrench]
         )  # take state from straight parts last step
-        s = np.linspace(start_integration_length, self.params["L"], step_size_curved)
+        s = np.linspace(start_integration_length, L_eff, step_size_curved)
         curved_states = integrate.odeint(self.cosserate_rod_ode, state, s)
         if states is not None:
-            states = np.vstack([states, curved_states])
+            # drop the first curved row: it duplicates the last straight row (junction)
+            states = np.vstack([states, curved_states[1:]])
         else:
             states = curved_states
 
