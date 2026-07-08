@@ -5,70 +5,111 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.mplot3d.proj3d import proj_transform
 
-from vispy import scene
-from copy import copy
 from functools import partial
 import numpy as np
 import warnings
+
+
+def tube_end_indices(seg_indexes, number_of_tubes):
+    """
+    For each tube (1-indexed, tube 1 = innermost/longest), determine the row index
+    (exclusive, suitable for slicing ``pos[:end]``) up to which that tube is present in
+    the stacked forward-integration output.
+
+    ``seg_indexes`` looks like ``[0, (2, 3), (2, 11), (2, 13), (1, 21)]``: the first
+    entry is the base row (0), and every following entry is
+    ``(tubes_present_in_segment, cumulative_end_row_index)`` ordered base -> tip. Tube
+    k is present in every segment whose tube-count is >= k, so its end index is the
+    last such segment's cumulative end.
+
+    :param seg_indexes: segment list as produced by ``ConcentricTubeContinuumRobot``
+    :param number_of_tubes: total number of tubes in the robot
+    :return: list of length ``number_of_tubes`` with an end index per tube, or ``None``
+        for a tube that is never present (should not normally happen)
+    """
+    segments = seg_indexes[1:]
+    ends = []
+    for k in range(1, number_of_tubes + 1):
+        end = None
+        for count, seg_end in segments:
+            if count >= k:
+                end = seg_end
+        ends.append(end)
+    return ends
 
 
 class Engine:
     def __init__(self) -> object:
         self.plotted_robots = {}
 
-    def plot_robot_pos(self, pos, segments, radii, number_of_tubes, name="robot"):
-        self.displ_fwd(pos, segments, radii, number_of_tubes, name)
+    def plot_robot_pos(self, frame, name="robot"):
+        self.displ_fwd(frame, name)
 
-    def displ_fwd(self, frame, name="robot"):
+    def displ_fwd(self, frame, name="robot", show_forces=False):
         pass
 
 
 class VisPy(Engine):
     def __init__(self):
+        super().__init__()
+        try:
+            from vispy import scene
+        except ImportError as exc:
+            raise ImportError(
+                "vispy is required for the VisPy engine - pip install vispy"
+            ) from exc
+        self._scene_module = scene
+
         self.canvas = scene.SceneCanvas(
             title="PyCTCR - Vispy", size=(600, 600), bgcolor="white", show=True
         )
-        self.view = self.canvas.central_widget.add_view("panzoom")
+        self.view = self.canvas.central_widget.add_view()
         self.view.camera = "arcball"
 
         self.tubes = {}
 
-    def displ_fwd(self, frame, name="robot"):
+    def displ_fwd(self, frame, name="robot", show_forces=False):
         pos = frame[0]
         segments = frame[1]
         number_of_tubes = frame[2]
 
-        tmp_segs = copy(segments)
-        tmp_segs.reverse()
-        tmp_segs.pop()
+        for visual in self.tubes.get(name, []):
+            visual.parent = None
+        self.tubes[name] = []
 
-        cur_tube_num = 1
-        while cur_tube_num <= number_of_tubes and len(tmp_segs) != 0:
-            seg = tmp_segs.pop(0)
-            if seg[0] == cur_tube_num:
-                if len(self.tubes[name]) > 0:
-                    self.tubes[name][cur_tube_num - 1].parent = None
-                tube = scene.visuals.Tube(
-                    points=pos[: seg[1], :],
-                    radius=self.radii[cur_tube_num - 1] * 1e3,
-                    parent=self.canvas.scene,
-                )
-                if len(self.tubes[name]) > 0:
-                    self.tubes[name][cur_tube_num - 1] = tube
-                else:
-                    self.tubes[name].append(tube)
-            self.canvas.scene
+        ends = tube_end_indices(segments, number_of_tubes)
+        for tube_idx, end in enumerate(ends, start=1):
+            if end is None:
+                continue
+            tube = self._scene_module.visuals.Tube(
+                points=pos[:end, :],
+                radius=self.radii[tube_idx - 1],
+                parent=self.canvas.scene,
+            )
+            self.tubes[name].append(tube)
 
     def add_robot(self, radii, number_of_tubes, name="robot"):
         self.radii = radii
         self.tubes[name] = []
-        # for i in range(number_of_tubes):
-        #    self.tubes[name].append(scene.visuals.Tube(points=np.zeros(3), radius=radii[i]*1e3))
 
-    def show(self, frames):
+    def show(self, frames, show_forces=False):
+        # vispy rendering here is a static snapshot (no animation support yet), so show
+        # the last frame of each robot.
+        all_positions = []
         for name in frames.keys():
-            self.displ_fwd(frames[name][0], name)
-        self.view.camera.set_range(x=[-3, 3])
+            last_frame = frames[name][-1]
+            self.displ_fwd(last_frame, name, show_forces=show_forces)
+            all_positions.append(last_frame[0])
+
+        if all_positions:
+            pos = np.vstack(all_positions)
+            span = np.ptp(pos, axis=0)
+            margin = 0.1 * max(span.max(), 1e-6)
+            mins = pos.min(axis=0) - margin
+            maxs = pos.max(axis=0) + margin
+            self.view.camera.set_range(
+                x=[mins[0], maxs[0]], y=[mins[1], maxs[1]], z=[mins[2], maxs[2]]
+            )
         self.canvas.app.run()
 
 
@@ -115,7 +156,8 @@ class MatplotLib(Engine):
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(projection="3d")
         self.ani = {}
-        self.arrows = {}  # TODO redo.. currently only avalable for all forces and buggy
+        self.arrows = {}
+        self._bbox = None  # running [mins, maxs] over all rendered frames
 
     def set_axes_equal(self, ax):
         """Make axes of 3D plot have equal scale so that spheres appear as spheres,
@@ -145,6 +187,31 @@ class MatplotLib(Engine):
         ax.set_ylim3d([y_middle - plot_radius, y_middle + plot_radius])
         ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
 
+    def _update_axes_limits(self, pos):
+        """
+        Grow a running bounding box over every position seen so far (plus the z=0
+        ground plane, so the shadow stays visible) and apply it, with a margin, to the
+        axes. Matplotlib's 3D line artists do not autoscale on set_data, so this has to
+        be done explicitly.
+        """
+        pos_with_ground = np.vstack([pos, np.zeros((1, 3))])
+        mins = pos_with_ground.min(axis=0)
+        maxs = pos_with_ground.max(axis=0)
+        if self._bbox is None:
+            self._bbox = [mins.copy(), maxs.copy()]
+        else:
+            self._bbox[0] = np.minimum(self._bbox[0], mins)
+            self._bbox[1] = np.maximum(self._bbox[1], maxs)
+
+        bbox_min, bbox_max = self._bbox
+        span = np.maximum(bbox_max - bbox_min, 1e-6)
+        margin = 0.1 * span
+        lo = bbox_min - margin
+        hi = bbox_max + margin
+        self.ax.set_xlim3d(lo[0], hi[0])
+        self.ax.set_ylim3d(lo[1], hi[1])
+        self.ax.set_zlim3d(lo[2], hi[2])
+
     def add_robot(self, radii, number_of_tubes, name="robot"):
         if name not in self.plotted_robots:
             robot_seg_dict = {}
@@ -171,8 +238,9 @@ class MatplotLib(Engine):
             self.plotted_robots[name] = robot_seg_dict
 
     def remove_all_arrows(self):
-        for name in self.arrows.keys():
+        for name in list(self.arrows.keys()):
             self.arrows[name].remove()
+        self.arrows.clear()
 
     def add_arrow(self, x, y, z, dx, dy, dz, name="tmp", color="red"):
         if name in self.arrows.keys():
@@ -185,53 +253,54 @@ class MatplotLib(Engine):
         pos = frame[0]
         segments = frame[1]
         number_of_tubes = frame[2]
-        rots = frame[3]
-        wrenches = frame[4]
-        cur_tube_num = 1
-        tmp_segs = copy(segments)
-        tmp_segs.reverse()
-        tmp_segs.pop()
-        while cur_tube_num <= number_of_tubes and len(tmp_segs) != 0:
-            seg = tmp_segs.pop(0)
-            if seg[0] == cur_tube_num:
-                self.plotted_robots[name][name + "tube" + str(cur_tube_num)].set_data(
-                    pos[: seg[1], 0],
-                    pos[: seg[1], 1],
-                )
-                self.plotted_robots[name][
-                    name + "tube" + str(cur_tube_num)
-                ].set_3d_properties(pos[: seg[1], 2])
+        wrenches = frame[4] if len(frame) > 4 else None
 
-                self.plotted_robots[name][
-                    name + "tube" + str(cur_tube_num) + "_shade"
-                ].set_data(
-                    pos[: seg[1], 0],
-                    pos[: seg[1], 1],
-                )
+        ends = tube_end_indices(segments, number_of_tubes)
+        for tube_idx, end in enumerate(ends, start=1):
+            if end is None:
+                continue
+            seg_pos = pos[:end]
 
-                cur_tube_num += 1
-        if show_forces:
-            for i, p in enumerate(pos):
-                transf = np.vstack(
-                    [
-                        np.hstack([rots[i].reshape(3, 3), p.reshape(-1, 1)]),
-                        np.array([0, 0, 0, 1]),
-                    ]
-                )
-                f_vector = np.hstack([wrenches[i][:3], np.ones(1)]).reshape(-1, 1)
-                f_vector = transf @ f_vector
+            tube_line = self.plotted_robots[name][name + "tube" + str(tube_idx)]
+            tube_line.set_data(seg_pos[:, 0], seg_pos[:, 1])
+            tube_line.set_3d_properties(seg_pos[:, 2])
+
+            shade_line = self.plotted_robots[name][
+                name + "tube" + str(tube_idx) + "_shade"
+            ]
+            shade_line.set_data_3d(
+                seg_pos[:, 0], seg_pos[:, 1], np.zeros(seg_pos.shape[0])
+            )
+
+        if show_forces and wrenches is not None:
+            self.remove_all_arrows()
+            bbox_diag = np.linalg.norm(pos.max(axis=0) - pos.min(axis=0))
+            arrow_length = 0.1 * bbox_diag if bbox_diag > 1e-9 else 1.0
+            step = max(1, len(pos) // 20)
+            for i in range(0, len(pos), step):
+                force = wrenches[i][:3]
+                force_norm = np.linalg.norm(force)
+                if force_norm < 1e-9:
+                    continue
+                direction = force / force_norm * arrow_length
                 self.add_arrow(
-                    f_vector[0, 0],
-                    f_vector[1, 0],
-                    f_vector[2, 0],
-                    p[0],
-                    p[1],
-                    p[2],
+                    pos[i, 0],
+                    pos[i, 1],
+                    pos[i, 2],
+                    direction[0],
+                    direction[1],
+                    direction[2],
                     name=i,
                 )
+        else:
+            self.remove_all_arrows()
+
+        self._update_axes_limits(pos)
         self.set_axes_equal(self.ax)
 
-    def show(self, frames, show_forces):
+        return list(self.plotted_robots[name].values()) + list(self.arrows.values())
+
+    def show(self, frames, show_forces=False):
         for name in frames.keys():
             self.ani[name] = FuncAnimation(
                 self.fig,
@@ -281,8 +350,8 @@ class Scene:
                 [positions, segments[0], number_of_tubes, rotations, wrenches]
             )
 
-    def add_arrows(self, x, y, z, dx, dy, dz, color):
-        self.engine.add_arrow(x, y, z, dx, dy, dz, color)
+    def add_arrows(self, x, y, z, dx, dy, dz, color, name="tmp"):
+        self.engine.add_arrow(x, y, z, dx, dy, dz, name=name, color=color)
 
     def show(self):
         return self.engine.show(self.robot_frames, self._show_forces)
