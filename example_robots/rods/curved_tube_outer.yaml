@@ -5,5 +5,5 @@ E: 339889091.1107947  # Young's modulus - Nylon Taulmann3d 618 Nylon
 G: 97898219.42862949  # Shear modulus - Nylon Taulmann3d 618 Nylon
 r_inner: 1.5 * 1e-3
 r_outer: 2.5 * 1e-3
-rho: 8000  # Density
+rho: 1140  # Density - typical value for nylon 6/66, no datasheet for taulman3D 618 found
 g: 0  # Gravitational acceleration

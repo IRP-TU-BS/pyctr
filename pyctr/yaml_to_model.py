@@ -73,7 +73,7 @@ def setup_tubes(config_path):
     return convert_tuple_config(config_dict, folder_config_path + "/")
 
 
-def load_continous_ctcr_model(config):
+def load_continous_ctcr_model(config, robot_class=ConcentricTubeContinuumRobot, **kwargs):
     tube_conf = setup_tubes(config)
 
     rods = []
@@ -91,4 +91,4 @@ def load_continous_ctcr_model(config):
         R0 = np.eye(3)
         rod.set_initial_conditions(p0, R0)
         rods.append(rod)
-    return ConcentricTubeContinuumRobot(rods)
+    return robot_class(rods, **kwargs)
