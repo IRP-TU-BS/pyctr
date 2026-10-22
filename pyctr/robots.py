@@ -217,6 +217,11 @@ class ConcentricTubeContinuumRobot:
                 dense_output=True,
                 t_eval=s,
                 method="LSODA",
+                # The shooting methods differentiate this integration numerically. With
+                # the default tolerances (rtol=1e-3) the residuals are too noisy and
+                # push_end stops with residuals of ~1e-2.
+                rtol=1e-8,
+                atol=1e-10,
             )  # beta is defined 0-1 -> L-L*beta  if beta 0 -> fully elongated tube
 
             p = ode_states.y.T[-1:, :3][0]
