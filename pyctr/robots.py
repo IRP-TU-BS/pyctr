@@ -82,7 +82,7 @@ class ConcentricTubeContinuumRobot:
             [0, kappa, 0]
         )  # we consider that the curvature is defined over y
 
-    def get_ordered_segments(self):
+    def get_ordered_segments(self, only_positive=True):
         """
         Caclulates the start and end of each segment (a part of the robot that has a constant curvature)
         :return: list of sorted segment ends (starting 0 as base)
@@ -97,7 +97,8 @@ class ConcentricTubeContinuumRobot:
         sorted_ends = np.sort([0] + [item for t in ends for item in t])
         sorted_ends = np.unique(sorted_ends)
         # sorted_ends = np.sort([item for t in ends for item in t])
-        sorted_ends = sorted_ends[sorted_ends >= 0]
+        if only_positive:
+            sorted_ends = sorted_ends[sorted_ends >= 0]
         return list(sorted_ends)
 
     def tube_tip_indices(self):
