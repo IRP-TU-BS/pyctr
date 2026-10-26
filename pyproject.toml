@@ -34,6 +34,9 @@ dependencies = [
 readme = "README.md"
 requires-python = ">= 3.8"
 
+[project.optional-dependencies]
+drake = ["drake>=1.58"]  # pyctr.drake_system
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
