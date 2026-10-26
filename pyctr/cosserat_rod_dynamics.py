@@ -16,6 +16,9 @@ from .robots import ConcentricTubeContinuumRobot
 from .utils import hat, Rz
 
 
+_TOL = 1e-6  # m, smallest distance between segment borders (shorter intervals stop Newton)
+
+
 def _bdf_alpha(dt, alpha):
     """Coefficients c0, c1, c2, d1 of x_t = c0 * x + x_h"""
     return (1.5 + alpha) / (dt * (1 + alpha)), -2 / dt, (0.5 + alpha) / (dt * (1 + alpha)), alpha / (1 + alpha)
@@ -136,16 +139,27 @@ class DynamicConcentricTubeRobot(ConcentricTubeContinuumRobot):
     """
     Concentric tube robot dynamics, Till et al. 2020, eq. (13), (16), (17), (19), (21), (25) with Kirchhoff tubes.
     Tubes are ordered inner to outer and curved about their y axis (u* = [0, kappa, 0]) after straight_length.
-    alphas may change between steps (rotate), betas are fixed after init_static (the paper assumes beta_t = 0).
+    alphas and betas may change between steps (rotate, translate). New betas give a new grid with the same number of
+    nodes (fixed at init_static), see remesh; the axial velocity of the tubes is neglected (paper: beta_t = 0).
+    The base plate may move: set p_init, R_init (pose at the end of the step) and base_velocity before each step.
     Not modelled: transmission below the base plate, friction, tip masses.
     Tip wrench [F, M] (world frame) acts on the end of the inner tube. Optional tube param: Bbt (damping, 3x3).
+
+    Contact (frictionless penalty): every interval between nodes can touch one plane (normal, point), the normal points
+    from the obstacle to the robot. With the depth d = radius - normal . (backbone - point), the robot gets the force
+    per length contact_stiffness * d * max(0, 1 - contact_dissipation * normal . v) * normal while d > 0
+    (Hunt-Crossley, continuous at d = 0). It is evaluated at the new time step, so stiff contact stays stable.
 
     y per node: p, R (of tube 1), q, w, n (world), m^b_xy (total, tube 1 frame), m^b_z, theta, gamma (per tube)
     z per interval between nodes (variables with time derivatives): q, w, u_xy (tube 1), u_z, gamma (per tube)
     """
 
-    def __init__(self, tubes, dt=2e-3, bdf_alpha=-0.2, **kwargs):
+    def __init__(self, tubes, dt=2e-3, bdf_alpha=-0.2, contact_stiffness=1e6, contact_dissipation=0.0, **kwargs):
         super().__init__(tubes, **kwargs)
+        self.contact_stiffness = contact_stiffness  # N/m^2: force per robot length and per penetration depth
+        self.contact_dissipation = contact_dissipation  # s/m, Hunt-Crossley
+        # moving base: p_init, R_init (pose of the base plate) and its velocity in the world frame
+        self.base_velocity = (np.zeros(3), np.zeros(3))  # linear, angular
         prm = [t.params for _, t in self.tubes]
         damping = [p.get("Bbt", np.zeros((3, 3))) for p in prm]
         self._EI = np.array([p["Kbt"][0, 0] for p in prm])
@@ -159,24 +173,39 @@ class DynamicConcentricTubeRobot(ConcentricTubeContinuumRobot):
         self.dt = dt
         self._c = _bdf_alpha(dt, bdf_alpha)
 
-    def _grid(self):
-        """Nodes self.s from the current betas, tubes present and u*_y per interval, residual rows -> nodes"""
+    def _grid(self, intervals=None):
+        """
+        Nodes self.s from the current betas, tubes present and u*_y per interval, residual rows -> nodes.
+        Without intervals the node distance is the s of tube 1, otherwise the given number of intervals is distributed
+        over the segments by their length (at least one per segment), so the state size stays the same.
+        """
         k = len(self.tubes)
         L = np.array([t.params["L"] for _, t in self.tubes])
         end = L * (1 - self.betas)
         curve = np.array([t.params["straight_length"] for _, t in self.tubes]) - L * self.betas
-        borders = np.unique(np.concatenate([[0], end, curve]))
-        borders = borders[(borders >= 0) & (borders <= end[0])]
-        ds = self.tubes[0][1].params["s"]
+        borders = [0.0]  # borders closer than _TOL are merged, roundoff would give intervals of 1e-17 m
+        for b in np.unique(np.concatenate([end, curve])):
+            if borders[-1] + _TOL < b < end[0] - _TOL:
+                borders.append(b)
+        borders = np.array(borders + [end[0]])
+        lengths = np.diff(borders)
+        if intervals is None:
+            counts = np.ceil(lengths / self.tubes[0][1].params["s"]).astype(int)
+        elif intervals < len(lengths):
+            raise ValueError(f"{intervals} intervals are not enough for {len(lengths)} segments")
+        else:  # largest remainder
+            share = (intervals - len(lengths)) * lengths / lengths.sum()
+            counts = 1 + np.floor(share).astype(int)
+            counts[np.argsort(np.floor(share) - share, kind="stable")[: intervals - counts.sum()]] += 1
         s, active, kappa = [np.zeros(1)], [], []
-        for s0, s1 in zip(borders[:-1], borders[1:]):
-            n = int(np.ceil((s1 - s0) / ds))
+        for s0, s1, n in zip(borders[:-1], borders[1:], counts):
             s.append(np.linspace(s0, s1, n + 1)[1:])
-            active += [end >= s1] * n
-            kappa += [self._kappa * (end >= s1) * (curve < 0.5 * (s0 + s1))] * n
+            active += [end >= s1 - _TOL] * n
+            kappa += [self._kappa * (end >= s1 - _TOL) * (curve < 0.5 * (s0 + s1))] * n
         self.s = np.concatenate(s)
         self._active, self._kappa_s = np.array(active, dtype=float), np.array(kappa)
-        self._ends = np.searchsorted(self.s, end[1:])
+        self.radius = (self._active * [t.params["r_outer"] for _, t in self.tubes]).max(axis=1)  # per interval
+        self._ends = np.abs(self.s[:, None] - end[1:]).argmin(axis=0)  # node of each tube end (nearest)
         self._base_idx = np.r_[0:18, 23 + k : 23 + 3 * k]
 
         # every residual row depends on one or two neighbouring nodes, see _residual
@@ -186,7 +215,7 @@ class DynamicConcentricTubeRobot(ConcentricTubeContinuumRobot):
         b = np.concatenate([i + 1, a[len(i) :]])
         self._row_node = [np.where(a % 2 == p, a, np.where(b % 2 == p, b, -1)) for p in (0, 1)]
 
-    def _ode(self, y, z_h, c0):
+    def _ode(self, y, z_h, c0, contacts=None):
         """eq. (13) with x_t = c0 * x + x_h, for all intervals at once: y (M - 1, ny), z_h (M - 1, nz)"""
         k = len(self.tubes)
         active, kappa = self._active, self._kappa_s
@@ -217,29 +246,41 @@ class DynamicConcentricTubeRobot(ConcentricTubeContinuumRobot):
         e3_x_nb = np.column_stack([-nb[:, 1], nb[:, 0], np.zeros(len(y))])
         mbs = -np.cross(u, np.column_stack([mxy, mz.sum(1)])) - e3_x_nb + rhoI.sum(1, keepdims=True) * w_t
 
+        f = self._f if contacts is None else self._f + self._contact_force(y, contacts)  # gravity and contact
+
         ys = np.empty_like(y)
         ys[:, 0:3] = R[:, :, 2]
         ys[:, 3:12] = (R @ _hat(u)).reshape(-1, 9)
         ys[:, 12:15] = -np.cross(u, q) + w_x_e3
         ys[:, 15:18] = u_t - np.cross(u, w)
-        ys[:, 18:21] = -self._f + self._rhoA * np.einsum("ijk,ik->ij", R, np.cross(w, q) + q_t)
+        ys[:, 18:21] = -f + self._rhoA * np.einsum("ijk,ik->ij", R, np.cross(w, q) + q_t)
         ys[:, 21:23] = mbs[:, :2] + w_x_e3[:, :2] * (rhoI.sum(1) * w[:, 2] + (rhoI * ga).sum(1))[:, None]
         ys[:, 23 : 23 + k] = -(ux * my - uy * mx) + 2 * rhoI * (w_t[:, 2:3] + ga_t)
         ys[:, 23 + k : 23 + 2 * k] = (uz - uz[:, :1]) * active
         ys[:, 23 + 2 * k :] = (uz_t - uz_t[:, :1]) * active
         return ys, np.column_stack([q, w, uxy, uz, ga])
 
-    def _residual(self, x, c0, z_h, alphas_t, tip_wrench):
+    def _contact_force(self, y, contacts):
+        """Contact force per length on every interval (world frame) for the midpoint states y"""
+        normal, point = contacts
+        depth = self.radius - np.einsum("ij,ij->i", normal, y[:, :3] - point)
+        v_normal = np.einsum("ij,ijk,ik->i", normal, y[:, 3:12].reshape(-1, 3, 3), y[:, 12:15])  # normal . (R q)
+        press = self.contact_stiffness * np.maximum(depth, 0) * np.maximum(0, 1 - self.contact_dissipation * v_normal)
+        return press[:, None] * normal
+
+    def _residual(self, x, c0, z_h, alphas_t, tip_wrench, contacts):
         """Midpoint rule between nodes (25), base (19), free torsion at the end of outer tubes, tip wrench (21)"""
         k = len(self.tubes)
         y = x.reshape(len(self.s), -1)
-        ys, z = self._ode(0.5 * (y[1:] + y[:-1]), z_h, c0)
+        ys, z = self._ode(0.5 * (y[1:] + y[:-1]), z_h, c0, contacts)
+        R0 = self.R_init @ Rz(self.alphas[0])
+        v, w = self.base_velocity
         base = np.concatenate(
             [
                 self.p_init.flatten(),
-                (self.R_init @ Rz(self.alphas[0])).flatten(),
-                np.zeros(5),
-                alphas_t[:1],
+                R0.flatten(),
+                R0.T @ v,
+                R0.T @ w + [0, 0, alphas_t[0]],
                 self.alphas - self.alphas[0],
                 alphas_t - alphas_t[0],
             ]
@@ -277,9 +318,9 @@ class DynamicConcentricTubeRobot(ConcentricTubeContinuumRobot):
         rows, cols, vals = np.concatenate(rows), np.concatenate(cols), np.concatenate(vals)
         return coo_matrix((vals, (rows, cols)), shape=(len(x), len(x))).tocsc()
 
-    def _solve(self, c0, z_h, alphas_t, tip_wrench):
+    def _solve(self, c0, z_h, alphas_t, tip_wrench, contacts):
         """Newton's method on the discretized BVP, starting from the last solution"""
-        args = (c0, z_h, alphas_t, np.asarray(tip_wrench, dtype=float))
+        args = (c0, z_h, alphas_t, np.asarray(tip_wrench, dtype=float), contacts)
         x = self.y.flatten()
         for _ in range(20):
             r, self.z = self._residual(x, *args)
@@ -289,16 +330,23 @@ class DynamicConcentricTubeRobot(ConcentricTubeContinuumRobot):
         else:
             raise RuntimeError(f"Newton's method did not converge, max residual {np.abs(r).max():.1e}")
         self.y = x.reshape(len(self.s), -1)
+        self.contact_force = np.zeros((len(self.s) - 1, 3))  # force on every interval (N, world) of the last solve
+        if contacts is not None:
+            mid = 0.5 * (self.y[1:] + self.y[:-1])
+            self.contact_force = self._contact_force(mid, contacts) * np.diff(self.s)[:, None]
         k = len(self.tubes)
         wrenches = np.hstack([self.y[:, 18:23], self.y[:, 23 : 23 + k].sum(axis=1, keepdims=True)])
         return self.y[:, :3], self.y[:, 3:12], wrenches
 
-    def init_static(self, tip_wrench=np.zeros(6)):
+    def init_static(self, tip_wrench=np.zeros(6), contacts=None):
         """
         Solve the static BVP for the current alphas and betas and take it as rest state at t = 0
+        :param contacts: None or (normals, points), both (M - 1, 3) in the world frame, see class docstring.
+            A zero normal means no contact for this interval. M is known after the first call (len(self.s)).
         :return: positions (M, 3), orientations (M, 9), wrenches [n, m^b] (M, 6) at the arc lengths self.s
         """
         self._grid()
+        self._grid(len(self.s) - 1)  # the same grid as remesh gives for these betas
         self._betas = self.betas.copy()
         k = len(self.tubes)
         R0 = self.R_init @ Rz(self.alphas[0])
@@ -306,21 +354,67 @@ class DynamicConcentricTubeRobot(ConcentricTubeContinuumRobot):
         self.y[:, :3] = self.p_init.flatten() + np.outer(self.s, R0[:, 2])
         self.y[:, 3:12] = R0.flatten()
         self.y[:, 23 + k : 23 + 2 * k] = self.alphas - self.alphas[0]
-        out = self._solve(0.0, np.zeros((len(self.s) - 1, 8 + 2 * k)), np.zeros(k), tip_wrench)
+        out = self._solve(0.0, np.zeros((len(self.s) - 1, 8 + 2 * k)), np.zeros(k), tip_wrench, contacts)
         _, c1, c2, _ = self._c
         self._z_old, self._z_h = self.z, (c1 + c2) * self.z
         self._a_old, self._a_h = self.alphas.copy(), (c1 + c2) * self.alphas
         return out
 
-    def step(self, tip_wrench=np.zeros(6)):
+    def step(self, tip_wrench=np.zeros(6), contacts=None):
         """
         Advance one time step dt with the current alphas (see rotate). Call init_static first.
+        :param contacts: None or (normals, points), see init_static
         :return: positions (M, 3), orientations (M, 9), wrenches [n, m^b] (M, 6) at the arc lengths self.s
         """
-        if not np.array_equal(self.betas, self._betas):
-            raise ValueError("betas changed: insertion during dynamics is not modelled, call init_static again")
+        self.remesh()
         c0 = self._c[0]
-        out = self._solve(c0, self._z_h, c0 * self.alphas + self._a_h, tip_wrench)
+        out = self._solve(c0, self._z_h, c0 * self.alphas + self._a_h, tip_wrench, contacts)
         self._z_h, self._z_old = _advance(self._c, self.z, self._z_old, self._z_h), self.z
         self._a_h, self._a_old = _advance(self._c, self.alphas, self._a_old, self._a_h), self.alphas.copy()
         return out
+
+    def remesh(self):
+        """
+        Grid for new betas (translate) with the same number of nodes, called by step. Nodes (start of Newton) and
+        history terms are interpolated in s; the history of u_z and gamma of a tube only from where the tube was
+        before (none for a tube that was fully retracted). The axial velocity of the tubes is neglected (the paper
+        assumes beta_t = 0, slow insertion). Does nothing if the betas did not change.
+        """
+        if np.array_equal(self.betas, self._betas):
+            return
+        k = len(self.tubes)
+        s, mid, active = self.s, 0.5 * (self.s[1:] + self.s[:-1]), self._active
+        self._grid(len(s) - 1)
+        self._betas = self.betas.copy()
+        new_mid = 0.5 * (self.s[1:] + self.s[:-1])
+        self.y = np.column_stack([np.interp(self.s, s, column) for column in self.y.T])
+        for name in ("_z_old", "_z_h"):
+            z = getattr(self, name)
+            new = np.column_stack([np.interp(new_mid, mid, column) for column in z.T])
+            for i in range(1, k):
+                there = active[:, i] > 0
+                for c in (8 + i, 8 + k + i):  # u_z and gamma of tube i
+                    new[:, c] = np.interp(new_mid, mid[there], z[there, c]) * self._active[:, i] if there.any() else 0
+            setattr(self, name, new)
+
+    def get_state(self):
+        """All values step() depends on besides the inputs, as one vector: y, z_old, z_h, alphas_old, alphas_h and the
+        betas of the grid. The size does not change with the betas."""
+        return np.concatenate(
+            [self.y.ravel(), self._z_old.ravel(), self._z_h.ravel(), self._a_old, self._a_h, self._betas]
+        )
+
+    def set_state(self, x):
+        """Inverse of get_state for the same robot (after init_static), also sets the betas"""
+        k = len(self.tubes)
+        sizes = np.cumsum([self.y.size, self._z_old.size, self._z_h.size, k, k])
+        if np.size(x) != sizes[-1] + k:
+            raise ValueError(f"state has {np.size(x)} values, this robot needs {sizes[-1] + k}")
+        y, z_old, z_h, a_old, a_h, betas = np.split(np.array(x, dtype=float), sizes)
+        if not np.array_equal(betas, self.betas):
+            self.translate(betas)
+        if not np.array_equal(betas, self._betas):
+            self._grid(len(self.s) - 1)
+            self._betas = betas
+        self._a_old, self._a_h = a_old, a_h
+        self.y, self._z_old, self._z_h = y.reshape(self.y.shape), z_old.reshape(self._z_old.shape), z_h.reshape(self._z_h.shape)

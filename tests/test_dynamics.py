@@ -4,6 +4,7 @@ import numpy as np
 from scipy.integrate import solve_bvp
 from pyctr.cosserat_rod import CurvedCosseratRod
 from pyctr.cosserat_rod_dynamics import DynamicCosseratRod, DynamicConcentricTubeRobot
+from pyctr.utils import Rz
 from pyctr.yaml_to_model import load_continous_ctcr_model
 
 EXAMPLE_ROBOT = os.path.join(os.path.dirname(__file__), "../example_robots/ctr_robot.yaml")
@@ -103,6 +104,82 @@ class TestDynamicConcentricTubeRobot(unittest.TestCase):
             tips.append(ctr.step()[0][-1])
         p_static, _, _ = ctr.init_static()
         np.testing.assert_allclose(np.mean(tips[100:], axis=0), p_static[-1], atol=1e-3)
+
+    def test_contact_stops_robot_at_wall(self):
+        # released from a tip force, the free robot swings to x = -1.6 mm; a wall touches its surface at x = -0.8 mm
+        ctr = two_tubes(0.1, 2.5e-3, 0.0, dt=1e-3)
+        ctr.init_static()
+        x_wall = -2.5e-3 - 0.8e-3
+        intervals = len(ctr.s) - 1
+        contacts = (np.tile([1.0, 0, 0], (intervals, 1)), np.tile([x_wall, 0, 0], (intervals, 1)))
+        ctr.init_static([0.05, 0, 0, 0, 0, 0], contacts)
+        depth = []
+        for _ in range(30):  # contact after about 20 ms (period 66 ms with rho = 8000)
+            p = ctr.step(np.zeros(6), contacts)[0]
+            depth.append((ctr.radius - (0.5 * (p[1:, 0] + p[:-1, 0]) - x_wall)).max())
+        self.assertGreater(max(depth), 0)  # it touches the wall
+        self.assertLess(max(depth), 1e-4)  # and does not go through
+
+    def test_moving_base(self):
+        # rotating the base about z at W equals rotating all tubes (tip moves about 5 mm)
+        a, b = two_tubes(0.1, 5e-3, 11.636, dt=1e-3), two_tubes(0.1, 5e-3, 11.636, dt=1e-3)
+        a.init_static()
+        b.init_static()
+        W = 3.0
+        for i in range(1, 61):
+            a.rotate([W * i * a.dt] * 2)
+            b.R_init, b.base_velocity = Rz(W * i * b.dt), (np.zeros(3), np.array([0, 0, W]))
+            np.testing.assert_allclose(a.step()[0], b.step()[0], atol=1e-4)
+
+        # robot along x: the base accelerating up with g deforms it like gravity on a fixed base (about 0.7 mm)
+        a, b = two_tubes(0.1, 5e-3, 0.0, dt=1e-3), two_tubes(0.1, 5e-3, 0.0, dt=1e-3)
+        a.R_init = b.R_init = np.array([[0, 0, 1.0], [0, 1, 0], [-1, 0, 0]])
+        a.init_static()
+        b.init_static()
+        b._f = b._rhoA * np.array([0, 0, -9.81])  # gravity switched on at t = 0, like the acceleration of a
+        for i in range(1, 61):
+            t = i * a.dt
+            a.p_init, a.base_velocity = np.array([[0, 0, 0.5 * 9.81 * t**2]]).T, (np.array([0, 0, 9.81 * t]), np.zeros(3))
+            np.testing.assert_allclose(a.step()[0] - a.p_init.ravel(), b.step()[0], atol=1e-4)
+
+
+    def test_insertion(self):
+        def robot():
+            ctr = load_continous_ctcr_model(EXAMPLE_ROBOT, DynamicConcentricTubeRobot, dt=1e-2)
+            ctr.tubes[0][1].params["s"] = 5e-3
+            ctr.rotate([0, 0.8])
+            return ctr
+
+        # a tiny change of the betas does not move the robot (init_static and remesh give the same grid)
+        a = robot()
+        p0 = a.init_static()[0]
+        a.translate([1e-9, 0])
+        np.testing.assert_allclose(a.step()[0], p0, atol=1e-8)
+
+        # slow insertion ends at the static shape of the new betas
+        a = robot()
+        a.init_static()
+        for i in range(100):
+            a.translate(np.array([0.3, 0.25]) * min(1, (i + 1) / 80))
+            p = a.step()[0]
+        b = robot()
+        b.translate([0.3, 0.25])
+        np.testing.assert_allclose(p[-1], b.init_static()[0][-1], atol=5e-4)
+
+        # outer tube fully retracted and out again, tube tips aligned (borders that coincide in exact arithmetic)
+        size = len(a.get_state())
+        for betas in ([0.3, 0.6], [0.3, 1.0], [0.3, 0.5], [1 - 0.124 * 0.63 / 0.185, 0.37], [0.1, 0.3]):
+            a.translate(betas)
+            a.step()
+            self.assertEqual(len(a.get_state()), size)
+
+        # the state holds the betas: set_state undoes a later translate
+        x = a.get_state()
+        a.translate([0.2, 0.4])
+        a.set_state(x)
+        np.testing.assert_array_equal(a.betas, [0.1, 0.3])
+        with self.assertRaises(ValueError):
+            a.set_state(x[:-1])
 
 
 if __name__ == "__main__":

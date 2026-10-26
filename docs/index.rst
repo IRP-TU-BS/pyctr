@@ -26,3 +26,4 @@ Tutorials
    notebooks/Introduction ConcentricTubeContinuumRobot class - Changing configuration and applying external forces
    notebooks/Plotting robots with PyCTCR
    notebooks/Dynamics of concentric tube robots
+   notebooks/Simulation with Drake

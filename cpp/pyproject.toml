@@ -1,0 +1,18 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pyctr_cpp"
+version = "1.0.0"
+description = "C++ implementation of the pyctr models (concentric tube continuum robots) with Python bindings"
+readme = "README.md"
+authors = [{ name = "Heiko Donat", email = "heiko.donat@gauss-robotics.de" }]
+requires-python = ">= 3.8"
+dependencies = ["numpy"]
+
+[tool.scikit-build]
+# Eigen and yaml-cpp come from the system (see README.md), the package is installed by CMake (install rules)
+cmake.build-type = "Release"
+cmake.define = { PYCTR_TESTS = "OFF" }
+wheel.packages = []

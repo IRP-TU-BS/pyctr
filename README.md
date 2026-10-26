@@ -86,9 +86,20 @@ robot.apply_external_forces(external_forces)
 print(robot.current_state)
 ```
 
+### Simulation with Drake
+`pyctr.drake_system.ConcentricTubeRobotSystem` runs the dynamic robot model in a [Drake](https://drake.mit.edu) diagram: tube rotation and insertion as inputs, contact with obstacles in the `SceneGraph`, and force exchange with bodies of a `MultibodyPlant`. `pyctr.actuation_unit` optionally adds the IRP actuation unit (STL files from [irp_concentric_tube_continuum_robot](https://github.com/IRP-TU-BS/irp_concentric_tube_continuum_robot)), with carriages that follow the insertion.
+
+```bash
+pip install -e ".[drake]"
+```
+
+The tutorial `docs/notebooks/Simulation with Drake.ipynb` shows both setups, robot only and robot in the actuation unit, and has a table to choose between them.
+
+### C++ implementation
+The directory `cpp/` contains a C++ port of all models with Python bindings (`pyctr_cpp`, same classes and methods, 10 to 700 times faster). The Python package stays the readable reference implementation. See [cpp/README.md](cpp/README.md).
+
 ### Future Plans
 - Improve documentation
 - Make the package available on PyPI
-- Extend to dynamic models
 
 For detailed documentation, refer to the project's documentation generated via `make html` in the `doc` folder.

@@ -405,7 +405,8 @@ class ConcentricTubeContinuumRobot:
         :param betas: elongation values
         :return:
         """
-        valid = True
+        # the inner tube must stick out; 1e-12 m tolerance, so that tube ends aligned in exact arithmetic pass
+        valid = self.tubes[0][1].params["L"] * (1 - betas[0]) > 0
         for i in range(1, np.asarray(betas).shape[0]):
             valid = (
                 valid
@@ -413,6 +414,7 @@ class ConcentricTubeContinuumRobot:
                 - betas[i] * self.tubes[i][1].params["L"]
                 <= self.tubes[i - 1][1].params["L"]
                 - betas[i - 1] * self.tubes[i - 1][1].params["L"]
+                + 1e-12
             )
         return valid
 
