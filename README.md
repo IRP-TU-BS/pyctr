@@ -86,6 +86,9 @@ robot.apply_external_forces(external_forces)
 print(robot.current_state)
 ```
 
+### C++ implementation
+The directory `cpp/` contains a C++ port of all models with Python bindings (`pyctr_cpp`, same classes and methods, 10 to 700 times faster). The Python package stays the readable reference implementation. See [cpp/README.md](cpp/README.md).
+
 ### Future Plans
 - Improve documentation
 - Make the package available on PyPI
