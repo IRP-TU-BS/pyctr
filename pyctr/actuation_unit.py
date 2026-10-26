@@ -88,15 +88,22 @@ def read_stl(stl_path):
 def _obj(stl_path, cache_dir):
     """OBJ copy of a binary STL file (Meshcat does not show STL), named after the STL path, size and time"""
     stat = os.stat(stl_path)  # copies of different STL files with the same name must not share an OBJ file
-    key = hashlib.sha1(f"{os.path.abspath(stl_path)}:{stat.st_size}:{stat.st_mtime_ns}".encode()).hexdigest()[:10]
+    key = f"{os.path.abspath(stl_path)}:{stat.st_size}:{stat.st_mtime_ns}:normals"  # files without normals are rewritten
+    key = hashlib.sha1(key.encode()).hexdigest()[:10]
     obj = os.path.join(cache_dir, f"{os.path.splitext(os.path.basename(stl_path))[0]}_{key}.obj")
     if os.path.exists(obj):
         return obj
     vertices, faces = read_stl(stl_path)
+    a, b, c = (vertices[faces[:, k]] for k in range(3))
+    normals = np.cross(b - a, c - a)  # one normal per face (flat shading); the Drake renderers need normals
+    length = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals = np.where(length > 0, normals / np.where(length > 0, length, 1), [0, 0, 1])
+    k = np.arange(1, len(faces) + 1)[:, None]
     os.makedirs(cache_dir, exist_ok=True)
     with open(obj + ".tmp", "w") as f:
         np.savetxt(f, vertices, fmt="v %.6g %.6g %.6g")
-        np.savetxt(f, faces + 1, fmt="f %d %d %d")
+        np.savetxt(f, normals, fmt="vn %.4f %.4f %.4f")
+        np.savetxt(f, np.column_stack([faces[:, 0] + 1, k, faces[:, 1] + 1, k, faces[:, 2] + 1, k]), fmt="f %d//%d %d//%d %d//%d")
     os.replace(obj + ".tmp", obj)
     return obj
 

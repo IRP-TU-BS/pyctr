@@ -89,6 +89,8 @@ print(robot.current_state)
 ### Simulation with Drake
 `pyctr.drake_system.ConcentricTubeRobotSystem` runs the dynamic robot model in a [Drake](https://drake.mit.edu) diagram: tube rotation and insertion as inputs, contact with obstacles in the `SceneGraph`, and force exchange with bodies of a `MultibodyPlant`. `pyctr.actuation_unit` optionally adds the IRP actuation unit (STL files from [irp_concentric_tube_continuum_robot](https://github.com/IRP-TU-BS/irp_concentric_tube_continuum_robot)), with carriages that follow the insertion.
 
+![Concentric tube robot in the IRP actuation unit, rendered with Drake (RenderEngineVtk)](docs/notebooks/images/drake_actuation_unit_render.jpg)
+
 ```bash
 pip install -e ".[drake]"
 ```
