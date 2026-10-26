@@ -14,7 +14,7 @@ try:
     from pydrake.math import RigidTransform, RotationMatrix
     from pydrake.multibody.plant import AddMultibodyPlantSceneGraph
     from pydrake.systems.framework import DiagramBuilder
-    from pydrake.geometry import SceneGraph
+    from pydrake.geometry import MakeRenderEngineVtk, RenderEngineVtkParams, SceneGraph
     from pyctr.actuation_unit import SLEDGES_Z, X_CE, ActuationUnitCarriages, _carriage_parts, _fixed_parts
     from pyctr.actuation_unit import add_actuation_unit, read_stl
 except ImportError:
@@ -45,6 +45,7 @@ class TestActuationUnit(unittest.TestCase):
     def test_exit_pose_in_plant(self):
         builder = DiagramBuilder()
         plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=1e-3)
+        scene_graph.AddRenderer("vtk", MakeRenderEngineVtk(RenderEngineVtkParams()))  # cameras need OBJ normals
         X_WUnit = RigidTransform([0.1, 0.2, 0.3])
         with tempfile.TemporaryDirectory() as cache:
             X_WExit = add_actuation_unit(plant, STL_DIR, X_BodyUnit=X_WUnit, tube_radii=[1.25e-3, 2.5e-3], cache_dir=cache)
